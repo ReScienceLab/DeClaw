@@ -72,12 +72,15 @@ Slash commands:
 {
   "plugins": {
     "entries": {
-      "ipv6-p2p": {
+      "declaw": {
         "enabled": true,
         "config": {
           "peer_port": 8099,
           "data_dir": "~/.openclaw/ipv6-p2p",
-          "yggdrasil_peers": []
+          "yggdrasil_peers": [],
+          "bootstrap_peers": [],
+          "discovery_interval_ms": 600000,
+          "startup_delay_ms": 30000
         }
       }
     }
@@ -87,16 +90,155 @@ Slash commands:
 
 ## Architecture
 
-```
-~/.openclaw/ipv6-p2p/
-├── identity.json          Ed25519 keypair + derived addresses
-├── peers.db               SQLite — known peers + TOFU public key cache
-└── yggdrasil/
-    ├── yggdrasil.conf     Stable keypair (survives restarts)
-    └── yggdrasil.log      Daemon logs
+### System Overview
+
+```mermaid
+flowchart TB
+  subgraph UserNode["User Machine / VPS"]
+    subgraph OC["OpenClaw Gateway"]
+      UI["Chat UI / Slash Commands"]
+      CLI["CLI: openclaw p2p *"]
+      GW["Gateway Event Bus"]
+    end
+
+    subgraph Plugin["DeClaw Plugin"]
+      IDX["src/index.ts<br/>service bootstrap + wiring"]
+      CH["channel.ts<br/>OpenClaw channel adapter"]
+      PC["peer-client.ts<br/>signed outbound HTTP"]
+      PS["peer-server.ts<br/>/peer/ping<br/>/peer/announce<br/>/peer/message"]
+      PD["peer-discovery.ts<br/>bootstrap + gossip loop"]
+      ID["identity.ts<br/>Ed25519 identity + IPv6 derivation"]
+      DB["peer-db.ts<br/>TOFU peer store"]
+    end
+
+    subgraph FS["Local Data Dir ~/.openclaw/ipv6-p2p"]
+      IDJSON["identity.json"]
+      PEERS["peers.json"]
+      YGGDIR["yggdrasil/"]
+      YGGCONF["yggdrasil.conf"]
+      YGGSOCK["yggdrasil.sock"]
+      YGGLOG["yggdrasil.log"]
+    end
+
+    YGG["Local IPv6 overlay daemon"]
+  end
+
+  subgraph Bootstrap["Bootstrap Layer"]
+    BJSON["docs/bootstrap.json<br/>published bootstrap list"]
+    BS["bootstrap/server.mjs<br/>peer exchange server"]
+  end
+
+  subgraph RemotePeers["Remote OpenClaw Peers"]
+    PeerA["Peer A<br/>OpenClaw + DeClaw"]
+    PeerB["Peer B<br/>OpenClaw + DeClaw"]
+    PeerN["Peer N"]
+  end
+
+  UI --> GW
+  CLI --> IDX
+  GW --> CH
+  IDX --> ID
+  IDX --> DB
+  IDX --> PS
+  IDX --> PD
+  IDX --> YGG
+  CH --> PC
+  PS --> DB
+  PD --> DB
+  ID --> IDJSON
+  DB --> PEERS
+  YGG --> YGGDIR
+  YGGDIR --> YGGCONF
+  YGGDIR --> YGGSOCK
+  YGGDIR --> YGGLOG
+  PD --> BJSON
+  PD --> BS
+  BS --> PeerA
+  BS --> PeerB
+  BS --> PeerN
+  PC <--> PeerA
+  PC <--> PeerB
+  PC <--> PeerN
+  PS <--> PeerA
+  PS <--> PeerB
+  PS <--> PeerN
 ```
 
-The peer server listens on `[::]:8099` (all IPv6 interfaces, including Yggdrasil's `tun0`).
+### Startup Flow
+
+```mermaid
+sequenceDiagram
+  participant OC as OpenClaw
+  participant IDX as src/index.ts
+  participant ID as identity.ts
+  participant DB as peer-db.ts
+  participant YGG as IPv6 Overlay Daemon
+  participant PS as peer-server.ts
+  participant PD as peer-discovery.ts
+  participant BS as Bootstrap Nodes
+
+  OC->>IDX: start plugin service
+  IDX->>ID: loadOrCreateIdentity(dataDir)
+  ID-->>IDX: Ed25519 keypair + derived IPv6
+  IDX->>DB: initDb(dataDir)
+  IDX->>YGG: start daemon (best effort)
+  YGG-->>IDX: routable IPv6 + subnet
+  IDX->>PS: listen on [::]:peer_port
+  IDX->>OC: register channel + CLI + tools
+  IDX->>PD: wait startup_delay_ms
+  PD->>BS: fetch bootstrap list + POST /peer/announce
+  BS-->>PD: known peer sample
+  PD->>DB: upsert discovered peers
+  PD->>BS: periodic gossip / re-announce
+```
+
+### Message Delivery Path
+
+```mermaid
+sequenceDiagram
+  participant UI as OpenClaw UI / CLI
+  participant CH as channel.ts
+  participant PC as peer-client.ts
+  participant Net as IPv6 Network
+  participant PS as peer-server.ts
+  participant DB as peer-db.ts
+  participant GW as OpenClaw Gateway
+
+  UI->>CH: sendText(account, text)
+  CH->>PC: sendP2PMessage(identity, yggAddr, "chat", text)
+  PC->>PC: sign canonical payload (Ed25519)
+  PC->>Net: POST /peer/message
+  Net->>PS: inbound HTTP request
+  PS->>PS: validate source IPv6 == body.fromYgg
+  PS->>PS: verify Ed25519 signature
+  PS->>DB: TOFU verify/cache public key
+  PS->>GW: receiveChannelMessage(...)
+  GW-->>UI: render inbound chat
+```
+
+### Runtime Components
+
+- `src/index.ts`: owns plugin lifecycle, starts local services, registers the OpenClaw channel, CLI commands, slash commands, and LLM-callable tools.
+- `identity.ts`: creates the Ed25519 identity, derives stable IPv6 addresses, and signs/verifies canonical payloads.
+- `peer-server.ts`: inbound HTTP surface for ping, peer exchange, and direct message delivery.
+- `peer-client.ts`: outbound signed HTTP client for direct peer communication.
+- `peer-discovery.ts`: bootstraps from public bootstrap nodes, merges peer tables, and runs periodic gossip.
+- `peer-db.ts`: persists known peers, caches first-seen public keys, and enforces TOFU on later messages.
+- `bootstrap/server.mjs`: standalone bootstrap node for peer exchange and network seeding.
+
+### Local Files
+
+```text
+~/.openclaw/ipv6-p2p/
+├── identity.json              Ed25519 keypair + derived IPv6 addresses
+├── peers.json                 Known peers + TOFU public key cache
+└── yggdrasil/
+    ├── yggdrasil.conf         Local daemon config
+    ├── yggdrasil.sock         Admin socket
+    └── yggdrasil.log          Daemon logs
+```
+
+The peer server listens on `[::]:8099` by default, so it can accept direct IPv6 traffic from other peers.
 
 ### Trust model
 
