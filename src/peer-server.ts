@@ -81,6 +81,7 @@ export async function startPeerServer(
     // TOFU: record the announcer
     upsertDiscoveredPeer(ann.fromYgg, ann.publicKey, {
       alias: ann.alias,
+      version: ann.version,
       discoveredVia: ann.fromYgg,
       source: "gossip",
     });
