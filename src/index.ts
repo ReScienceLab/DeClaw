@@ -23,7 +23,7 @@ import { startPeerServer, stopPeerServer, getInbox } from "./peer-server";
 import { sendP2PMessage, pingPeer } from "./peer-client";
 import { bootstrapDiscovery, startDiscoveryLoop, stopDiscoveryLoop, DEFAULT_BOOTSTRAP_PEERS } from "./peer-discovery";
 import { upsertDiscoveredPeer } from "./peer-db";
-import { buildChannel, wireInboundToGateway } from "./channel";
+import { buildChannel, wireInboundToGateway, CHANNEL_CONFIG_SCHEMA } from "./channel";
 import { Identity, YggdrasilInfo, PluginConfig } from "./types";
 
 let identity: Identity | null = null;
@@ -134,6 +134,7 @@ export default function register(api: any) {
           aliases: ["p2p", "ygg", "ipv6-p2p"],
         },
         capabilities: { chatTypes: ["direct"] },
+        configSchema: CHANNEL_CONFIG_SCHEMA,
         config: {
           listAccountIds: () => (identity ? listPeers().map((p) => p.yggAddr) : []),
           resolveAccount: (_: unknown, accountId: string | undefined) => ({
