@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Logo Preview Gallery</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { 
+      font-family: system-ui, -apple-system, sans-serif; 
+      background: #1a1a1a; 
+      padding: 20px; 
+      margin: 0; 
+      color: white; 
+    }
+    h1 { text-align: center; margin-bottom: 10px; }
+    .subtitle { text-align: center; color: #888; margin-bottom: 30px; }
+    .controls {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .controls input {
+      padding: 8px 16px;
+      font-size: 14px;
+      border: 1px solid #444;
+      border-radius: 6px;
+      background: #2a2a2a;
+      color: white;
+      width: 300px;
+    }
+    .grid { 
+      display: grid; 
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); 
+      gap: 16px; 
+      max-width: 1400px; 
+      margin: 0 auto; 
+    }
+    .logo-card { 
+      background: white; 
+      border-radius: 10px; 
+      padding: 16px; 
+      text-align: center; 
+      cursor: pointer; 
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .logo-card:hover { 
+      transform: translateY(-4px); 
+      box-shadow: 0 8px 20px rgba(0,0,0,0.4); 
+    }
+    .logo-card img { 
+      width: 100%; 
+      height: 120px; 
+      object-fit: contain; 
+      margin-bottom: 8px; 
+    }
+    .logo-card p { 
+      margin: 0; 
+      color: #333; 
+      font-size: 13px; 
+      font-weight: 600; 
+    }
+    .logo-card span { 
+      display: block; 
+      color: #888; 
+      font-size: 11px; 
+      margin-top: 4px; 
+    }
+    .logo-card.favorite {
+      box-shadow: 0 0 0 3px #4CAF50;
+    }
+    .modal { 
+      display: none; 
+      position: fixed; 
+      top: 0; 
+      left: 0; 
+      width: 100%; 
+      height: 100%; 
+      background: rgba(0,0,0,0.9); 
+      z-index: 1000; 
+      align-items: center; 
+      justify-content: center;
+      flex-direction: column;
+    }
+    .modal.active { display: flex; }
+    .modal img { 
+      max-width: 500px; 
+      max-height: 500px; 
+      background: white; 
+      padding: 30px; 
+      border-radius: 12px; 
+    }
+    .modal-info {
+      margin-top: 20px;
+      color: white;
+      text-align: center;
+    }
+    .modal-info p { margin: 5px 0; }
+    .modal-close { 
+      position: absolute; 
+      top: 20px; 
+      right: 30px; 
+      color: white; 
+      font-size: 40px; 
+      cursor: pointer; 
+    }
+    .modal-nav {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      color: white;
+      font-size: 60px;
+      cursor: pointer;
+      user-select: none;
+      padding: 20px;
+    }
+    .modal-nav:hover { color: #4CAF50; }
+    .modal-nav.prev { left: 20px; }
+    .modal-nav.next { right: 20px; }
+    .favorites-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: #2a2a2a;
+      padding: 15px 20px;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      border-top: 1px solid #444;
+    }
+    .favorites-bar span { color: #888; }
+    .favorites-list { 
+      flex: 1; 
+      color: #4CAF50; 
+      font-weight: 600;
+    }
+    .section-divider {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 20px 0;
+      color: #666;
+      font-size: 14px;
+      border-top: 1px solid #333;
+      margin-top: 10px;
+    }
+    body { padding-bottom: 80px; }
+  </style>
+</head>
+<body>
+  <h1>Logo Preview Gallery</h1>
+  <p class="subtitle">Click any logo to enlarge • Click again to toggle favorite</p>
+  
+  <div class="controls">
+    <input type="text" id="search" placeholder="Filter logos... (e.g., 'v1' or '05')">
+  </div>
+  
+  <div class="grid" id="grid">
+    <!-- LOGO_CARDS_PLACEHOLDER -->
+    <!-- Example cards - replace with actual logos -->
+    <div class="logo-card" data-src="logo-01.png" onclick="showModal(this)">
+      <img src="logo-01.png" onerror="this.parentElement.style.display='none'">
+      <p>#01</p>
+    </div>
+    <div class="logo-card" data-src="logo-02.png" onclick="showModal(this)">
+      <img src="logo-02.png" onerror="this.parentElement.style.display='none'">
+      <p>#02</p>
+    </div>
+    <div class="logo-card" data-src="logo-03.png" onclick="showModal(this)">
+      <img src="logo-03.png" onerror="this.parentElement.style.display='none'">
+      <p>#03</p>
+    </div>
+    <div class="logo-card" data-src="logo-04.png" onclick="showModal(this)">
+      <img src="logo-04.png" onerror="this.parentElement.style.display='none'">
+      <p>#04</p>
+    </div>
+    <div class="logo-card" data-src="logo-05.png" onclick="showModal(this)">
+      <img src="logo-05.png" onerror="this.parentElement.style.display='none'">
+      <p>#05</p>
+    </div>
+    <div class="logo-card" data-src="logo-06.png" onclick="showModal(this)">
+      <img src="logo-06.png" onerror="this.parentElement.style.display='none'">
+      <p>#06</p>
+    </div>
+    <div class="logo-card" data-src="logo-07.png" onclick="showModal(this)">
+      <img src="logo-07.png" onerror="this.parentElement.style.display='none'">
+      <p>#07</p>
+    </div>
+    <div class="logo-card" data-src="logo-08.png" onclick="showModal(this)">
+      <img src="logo-08.png" onerror="this.parentElement.style.display='none'">
+      <p>#08</p>
+    </div>
+    <div class="logo-card" data-src="logo-09.png" onclick="showModal(this)">
+      <img src="logo-09.png" onerror="this.parentElement.style.display='none'">
+      <p>#09</p>
+    </div>
+    <div class="logo-card" data-src="logo-10.png" onclick="showModal(this)">
+      <img src="logo-10.png" onerror="this.parentElement.style.display='none'">
+      <p>#10</p>
+    </div>
+    <div class="logo-card" data-src="logo-11.png" onclick="showModal(this)">
+      <img src="logo-11.png" onerror="this.parentElement.style.display='none'">
+      <p>#11</p>
+    </div>
+    <div class="logo-card" data-src="logo-12.png" onclick="showModal(this)">
+      <img src="logo-12.png" onerror="this.parentElement.style.display='none'">
+      <p>#12</p>
+    </div>
+    <div class="logo-card" data-src="logo-13.png" onclick="showModal(this)">
+      <img src="logo-13.png" onerror="this.parentElement.style.display='none'">
+      <p>#13</p>
+    </div>
+    <div class="logo-card" data-src="logo-14.png" onclick="showModal(this)">
+      <img src="logo-14.png" onerror="this.parentElement.style.display='none'">
+      <p>#14</p>
+    </div>
+    <div class="logo-card" data-src="logo-15.png" onclick="showModal(this)">
+      <img src="logo-15.png" onerror="this.parentElement.style.display='none'">
+      <p>#15</p>
+    </div>
+    <div class="logo-card" data-src="logo-16.png" onclick="showModal(this)">
+      <img src="logo-16.png" onerror="this.parentElement.style.display='none'">
+      <p>#16</p>
+    </div>
+    <div class="logo-card" data-src="logo-17.png" onclick="showModal(this)">
+      <img src="logo-17.png" onerror="this.parentElement.style.display='none'">
+      <p>#17</p>
+    </div>
+    <div class="logo-card" data-src="logo-18.png" onclick="showModal(this)">
+      <img src="logo-18.png" onerror="this.parentElement.style.display='none'">
+      <p>#18</p>
+    </div>
+    <div class="logo-card" data-src="logo-19.png" onclick="showModal(this)">
+      <img src="logo-19.png" onerror="this.parentElement.style.display='none'">
+      <p>#19</p>
+    </div>
+    <div class="logo-card" data-src="logo-20.png" onclick="showModal(this)">
+      <img src="logo-20.png" onerror="this.parentElement.style.display='none'">
+      <p>#20</p>
+    </div>
+  </div>
+  
+  <div class="favorites-bar">
+    <span>Favorites:</span>
+    <div class="favorites-list" id="favorites-list">None selected (click logos to favorite)</div>
+  </div>
+  
+  <div class="modal" id="modal" onclick="if(event.target === this) hideModal()">
+    <span class="modal-close" onclick="hideModal()">&times;</span>
+    <span class="modal-nav prev" onclick="navModal(-1)">&#8249;</span>
+    <span class="modal-nav next" onclick="navModal(1)">&#8250;</span>
+    <img id="modal-img" src="">
+    <div class="modal-info">
+      <p id="modal-name"></p>
+      <p style="color:#888;font-size:12px">Press F to favorite • Arrow keys to navigate • Escape to close</p>
+    </div>
+  </div>
+  
+  <script>
+    let currentCard = null;
+    let favorites = new Set();
+    let visibleCards = [];
+    
+    function updateVisibleCards() {
+      visibleCards = Array.from(document.querySelectorAll('.logo-card')).filter(c => c.style.display !== 'none');
+    }
+    
+    function showModal(card) {
+      currentCard = card;
+      const src = card.dataset.src;
+      document.getElementById('modal-img').src = src;
+      document.getElementById('modal-name').textContent = card.querySelector('p').textContent;
+      document.getElementById('modal').classList.add('active');
+      updateVisibleCards();
+    }
+    
+    function hideModal() {
+      document.getElementById('modal').classList.remove('active');
+      currentCard = null;
+    }
+    
+    function navModal(dir) {
+      if (!currentCard) return;
+      updateVisibleCards();
+      const idx = visibleCards.indexOf(currentCard);
+      const newIdx = (idx + dir + visibleCards.length) % visibleCards.length;
+      showModal(visibleCards[newIdx]);
+    }
+    
+    function toggleFavorite(card) {
+      const name = card.querySelector('p').textContent;
+      if (favorites.has(name)) {
+        favorites.delete(name);
+        card.classList.remove('favorite');
+      } else {
+        favorites.add(name);
+        card.classList.add('favorite');
+      }
+      updateFavoritesList();
+    }
+    
+    function updateFavoritesList() {
+      const list = document.getElementById('favorites-list');
+      if (favorites.size === 0) {
+        list.textContent = 'None selected (click logos to favorite)';
+      } else {
+        list.textContent = Array.from(favorites).sort().join(', ');
+      }
+    }
+    
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') hideModal();
+      if (e.key === 'ArrowLeft') navModal(-1);
+      if (e.key === 'ArrowRight') navModal(1);
+      if ((e.key === 'f' || e.key === 'F') && currentCard) {
+        toggleFavorite(currentCard);
+      }
+    });
+    
+    document.querySelectorAll('.logo-card').forEach(card => {
+      card.addEventListener('dblclick', () => toggleFavorite(card));
+    });
+    
+    document.getElementById('search').addEventListener('input', (e) => {
+      const query = e.target.value.toLowerCase();
+      document.querySelectorAll('.logo-card').forEach(card => {
+        const name = card.querySelector('p').textContent.toLowerCase();
+        const src = card.dataset.src.toLowerCase();
+        card.style.display = (name.includes(query) || src.includes(query)) ? '' : 'none';
+      });
+    });
+  </script>
+</body>
+</html>

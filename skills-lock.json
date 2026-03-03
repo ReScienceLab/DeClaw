@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "skills": {
+    "archive": {
+      "source": "ReScienceLab/opc-skills",
+      "sourceType": "github",
+      "computedHash": "cda5dd9a6b269e4921047c6b6b1cf7edb658db34af51db60dedfeee63093a33a"
+    },
+    "banner-creator": {
+      "source": "ReScienceLab/opc-skills",
+      "sourceType": "github",
+      "computedHash": "3317d6f406a63324d5913ba2241e88367df1304e7697476ce4c067f51adb96ca"
+    },
+    "logo-creator": {
+      "source": "ReScienceLab/opc-skills",
+      "sourceType": "github",
+      "computedHash": "baac641dd2fb8b6e1aa658e8372c5e83672479e35553247d5ece4dd7917fa48c"
+    },
+    "nanobanana": {
+      "source": "ReScienceLab/opc-skills",
+      "sourceType": "github",
+      "computedHash": "b3ef6022c2d2b1be94fa2d52ae0da749495eef1fe4ea2becd413f052c03a13e6"
+    },
+    "producthunt": {
+      "source": "ReScienceLab/opc-skills",
+      "sourceType": "github",
+      "computedHash": "408e0d6324195edf641c23f3fc79f370d7dd2f754c2fcd89e6e60914e6927e5d"
+    },
+    "reddit": {
+      "source": "ReScienceLab/opc-skills",
+      "sourceType": "github",
+      "computedHash": "cb78c8355aba2e3334289c99e7ed06fb2d38a1defb17a649f5082611939a162d"
+    },
+    "seo-geo": {
+      "source": "ReScienceLab/opc-skills",
+      "sourceType": "github",
+      "computedHash": "56f90ba46b36563bb5461feb8462aed9283e74dfc4cdac2a98c42c4bc86a95be"
+    },
+    "twitter": {
+      "source": "ReScienceLab/opc-skills",
+      "sourceType": "github",
+      "computedHash": "edaa1a556aef9952026507a7f4889e7cd03b04db60add6c1997c505b75a6ef12"
+    }
+  }
+}
