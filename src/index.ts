@@ -31,6 +31,7 @@ let yggInfo: YggdrasilInfo | null = null;
 let dataDir: string = path.join(os.homedir(), ".openclaw", "ipv6-p2p");
 let peerPort: number = 8099;
 let _testMode: boolean = false;
+let _startupTimer: ReturnType<typeof setTimeout> | null = null;
 
 export default function register(api: any) {
   // ── 1. Background service ──────────────────────────────────────────────────
@@ -86,7 +87,8 @@ export default function register(api: any) {
 
       // DHT peer discovery — delay startup to let Yggdrasil routes converge
       const startupDelayMs = cfg.startup_delay_ms ?? 30_000;
-      setTimeout(async () => {
+      _startupTimer = setTimeout(async () => {
+        _startupTimer = null;
         console.log(`[p2p:discovery] Starting bootstrap — identity.yggIpv6: ${identity?.yggIpv6}`);
         await bootstrapDiscovery(identity!, peerPort, bootstrapPeers);
         startDiscoveryLoop(identity!, peerPort, discoveryIntervalMs);
@@ -94,6 +96,10 @@ export default function register(api: any) {
     },
 
     stop: async () => {
+      if (_startupTimer) {
+        clearTimeout(_startupTimer);
+        _startupTimer = null;
+      }
       stopDiscoveryLoop();
       await stopPeerServer();
       stopYggdrasil();
