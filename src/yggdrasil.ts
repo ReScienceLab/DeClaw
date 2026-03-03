@@ -109,6 +109,7 @@ export async function startYggdrasil(
   const external = detectExternalYggdrasil([pluginSock]);
   if (external) {
     console.log(`[ygg] Reusing external daemon — address: ${external.address}`);
+    ensurePublicPeers();
     return external;
   }
 
@@ -177,6 +178,43 @@ async function waitForAddress(logFile: string, timeoutSec: number): Promise<Yggd
     }
   }
   return null;
+}
+
+/**
+ * Ensure the running Yggdrasil daemon has at least one public peer.
+ * If only multicast/LAN peers are connected, inject default public peers
+ * via yggdrasilctl so the node can route to the wider Yggdrasil network.
+ */
+export function ensurePublicPeers(): void {
+  try {
+    const raw = execSync("yggdrasilctl -json getPeers", {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const peers: Array<{ uri?: string; remote?: string }> = JSON.parse(raw);
+    const hasPublicPeer = peers.some((p) => {
+      const uri = p.uri ?? p.remote ?? "";
+      return uri.startsWith("tcp://") || uri.startsWith("tls://");
+    });
+
+    if (!hasPublicPeer || peers.length === 0) {
+      console.log("[ygg] No public peers detected — injecting default peers");
+      for (const peer of DEFAULT_BOOTSTRAP_PEERS) {
+        try {
+          execSync(`yggdrasilctl addPeer uri="${peer}"`, {
+            timeout: 5000,
+            stdio: "ignore",
+          });
+        } catch {
+          // Peer may already exist or be unreachable — best effort
+        }
+      }
+      console.log(`[ygg] Injected ${DEFAULT_BOOTSTRAP_PEERS.length} public peer(s)`);
+    }
+  } catch {
+    // yggdrasilctl not available or failed — skip
+  }
 }
 
 export function stopYggdrasil(): void {
