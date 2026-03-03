@@ -224,6 +224,39 @@ export function stopYggdrasil(): void {
   }
 }
 
+/**
+ * Query the running Yggdrasil daemon for peer count and routing table size.
+ * Returns null if yggdrasilctl is not available.
+ */
+export function getYggdrasilNetworkInfo(): { peerCount: number; publicPeers: number; routeCount: number } | null {
+  try {
+    const peersRaw = execSync("yggdrasilctl -json getPeers", {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const peers: Array<{ uri?: string; remote?: string }> = JSON.parse(peersRaw);
+    const publicPeers = peers.filter((p) => {
+      const uri = p.uri ?? p.remote ?? "";
+      return uri.startsWith("tcp://") || uri.startsWith("tls://");
+    }).length;
+
+    let routeCount = 0;
+    try {
+      const treeRaw = execSync("yggdrasilctl -json getTree", {
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      routeCount = JSON.parse(treeRaw).length ?? 0;
+    } catch { /* optional */ }
+
+    return { peerCount: peers.length, publicPeers, routeCount };
+  } catch {
+    return null;
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }

@@ -17,7 +17,7 @@
 import * as os from "os";
 import * as path from "path";
 import { loadOrCreateIdentity, getActualIpv6 } from "./identity";
-import { startYggdrasil, stopYggdrasil, isYggdrasilAvailable, detectExternalYggdrasil } from "./yggdrasil";
+import { startYggdrasil, stopYggdrasil, isYggdrasilAvailable, detectExternalYggdrasil, getYggdrasilNetworkInfo } from "./yggdrasil";
 import { initDb, listPeers, upsertPeer, removePeer, getPeer, flushDb } from "./peer-db";
 import { startPeerServer, stopPeerServer, getInbox } from "./peer-server";
 import { sendP2PMessage, pingPeer } from "./peer-client";
@@ -467,6 +467,8 @@ export default function register(api: any) {
         address = identity?.yggIpv6 ?? "unknown";
       }
 
+      const netInfo = binaryAvailable ? getYggdrasilNetworkInfo() : null;
+
       const lines = [
         `Binary installed : ${binaryAvailable ? "Yes" : "No"}`,
         `Daemon running   : ${daemonRunning ? `Yes (pid ${yggInfo?.pid})` : "No"}`,
@@ -476,6 +478,16 @@ export default function register(api: any) {
         `Address type     : ${addressType}`,
         `Globally routable: ${routable ? "Yes" : "No"}`,
       ];
+
+      if (netInfo) {
+        lines.push(
+          `Ygg peers        : ${netInfo.peerCount} (${netInfo.publicPeers} public)`,
+          `Routing table    : ${netInfo.routeCount} nodes`,
+        );
+        if (netInfo.publicPeers === 0) {
+          lines.push("", "WARNING: No public peers — node can only reach LAN neighbors.");
+        }
+      }
 
       if (!binaryAvailable) {
         lines.push(
