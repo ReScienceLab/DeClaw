@@ -2,58 +2,68 @@
 set -euo pipefail
 
 # DeClaw — Yggdrasil setup script
-# Installs the Yggdrasil binary, generates a config with TCP admin endpoint
-# (avoids UNIX socket permission issues), adds public peers, and starts the daemon.
+# Installs Yggdrasil, generates a config with TCP admin endpoint
+# (avoids UNIX socket permission issues), adds public peers, starts the daemon.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/ReScienceLab/DeClaw/main/scripts/setup-yggdrasil.sh | bash
-#   — or —
+#   sudo bash scripts/setup-yggdrasil.sh
+#   curl -fsSL https://raw.githubusercontent.com/ReScienceLab/DeClaw/main/scripts/setup-yggdrasil.sh | sudo bash
+#   — or via plugin —
 #   openclaw p2p setup
 
+# ── Constants ─────────────────────────────────────────────────────────────────
 YGG_VERSION="0.5.13"
 YGG_CONF="/etc/yggdrasil.conf"
 YGG_ADMIN_ADDR="127.0.0.1:9001"
 
-# Public peers for initial connectivity
 PUBLIC_PEERS=(
   "tcp://yggdrasil.mnpnk.com:10002"
   "tcp://ygg.mkg20001.io:80"
   "tcp://46.246.86.205:60002"
 )
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
 info()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 ok()    { printf '\033[1;32m ✓\033[0m  %s\n' "$*"; }
 warn()  { printf '\033[1;33m ⚠\033[0m  %s\n' "$*"; }
 fatal() { printf '\033[1;31m ✗\033[0m  %s\n' "$*" >&2; exit 1; }
 
-need_sudo() {
+# JSON field extractor — no python dependency
+json_field() {
+  # Usage: json_field '{"key":"val"}' key
+  # Handles simple top-level string values only
+  local json="$1" key="$2"
+  echo "$json" | grep -o "\"${key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" \
+    | head -1 | sed 's/.*:[[:space:]]*"//;s/"$//'
+}
+
+# ── 0. Root check ─────────────────────────────────────────────────────────────
+check_root() {
   if [ "$(id -u)" -ne 0 ]; then
-    info "This step requires sudo."
-    sudo "$@"
-  else
-    "$@"
+    fatal "This script must be run as root. Usage: sudo bash $0"
   fi
 }
 
 # ── 1. Detect OS & arch ──────────────────────────────────────────────────────
 detect_platform() {
   local os arch
-  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  os="$(uname -s)"
   arch="$(uname -m)"
 
   case "$arch" in
-    x86_64|amd64) arch="amd64" ;;
-    aarch64|arm64) arch="arm64" ;;
-    armv7*|armhf)  arch="armhf" ;;
+    x86_64|amd64) ARCH="amd64" ;;
+    aarch64|arm64) ARCH="arm64" ;;
+    armv7*|armhf)  ARCH="armhf" ;;
     *) fatal "Unsupported architecture: $arch" ;;
   esac
 
   case "$os" in
-    darwin) PLATFORM="macos" ;;
-    linux)  PLATFORM="linux" ;;
+    Darwin) PLATFORM="macos" ;;
+    Linux)  PLATFORM="linux" ;;
     *)      fatal "Unsupported OS: $os" ;;
   esac
-  ARCH="$arch"
+
+  ok "Platform: ${PLATFORM}/${ARCH}"
 }
 
 # ── 2. Check if already installed ────────────────────────────────────────────
@@ -75,104 +85,122 @@ install_binary() {
     info "Installing Yggdrasil v${YGG_VERSION} for macOS ${ARCH}..."
     url="https://github.com/yggdrasil-network/yggdrasil-go/releases/download/v${YGG_VERSION}/yggdrasil-${YGG_VERSION}-macos-${ARCH}.pkg"
     tmpdir="$(mktemp -d)"
+    trap 'rm -rf "$tmpdir"' EXIT
 
-    # Download and extract from pkg (avoids Gatekeeper issues with `installer`)
     curl -fsSL "$url" -o "${tmpdir}/yggdrasil.pkg"
+
+    # Extract from pkg directly (avoids Gatekeeper issues with `installer`)
     xar -xf "${tmpdir}/yggdrasil.pkg" -C "${tmpdir}"
-
-    # Extract payload from base.pkg
     mkdir -p "${tmpdir}/extract"
-    cd "${tmpdir}/extract"
-    gunzip < "${tmpdir}/base.pkg/Payload" | cpio -id 2>/dev/null
+    (cd "${tmpdir}/extract" && gunzip < "${tmpdir}/base.pkg/Payload" | cpio -id 2>/dev/null)
 
-    need_sudo cp "${tmpdir}/extract/usr/local/bin/yggdrasil" /usr/local/bin/yggdrasil
-    need_sudo cp "${tmpdir}/extract/usr/local/bin/yggdrasilctl" /usr/local/bin/yggdrasilctl
-    need_sudo chmod +x /usr/local/bin/yggdrasil /usr/local/bin/yggdrasilctl
-    # Remove Gatekeeper quarantine
-    need_sudo xattr -dr com.apple.quarantine /usr/local/bin/yggdrasil 2>/dev/null || true
-    need_sudo xattr -dr com.apple.quarantine /usr/local/bin/yggdrasilctl 2>/dev/null || true
+    cp "${tmpdir}/extract/usr/local/bin/yggdrasil" /usr/local/bin/yggdrasil
+    cp "${tmpdir}/extract/usr/local/bin/yggdrasilctl" /usr/local/bin/yggdrasilctl
+    chmod +x /usr/local/bin/yggdrasil /usr/local/bin/yggdrasilctl
+    xattr -dr com.apple.quarantine /usr/local/bin/yggdrasil 2>/dev/null || true
+    xattr -dr com.apple.quarantine /usr/local/bin/yggdrasilctl 2>/dev/null || true
 
     rm -rf "${tmpdir}"
+    trap - EXIT
 
   elif [ "$PLATFORM" = "linux" ]; then
-    # Try apt repo first (Debian/Ubuntu)
     if command -v apt-get >/dev/null 2>&1; then
       info "Installing Yggdrasil via apt..."
-      curl -fsSL https://www.yggdrasil-network.github.io/apt-key.gpg | need_sudo apt-key add - 2>/dev/null
-      echo "deb http://www.yggdrasil-network.github.io/apt/ debian main" \
-        | need_sudo tee /etc/apt/sources.list.d/yggdrasil.list >/dev/null
-      need_sudo apt-get update -qq
-      need_sudo apt-get install -y -qq yggdrasil
+      mkdir -p /etc/apt/keyrings
+      curl -fsSL https://neilalexander.s3.dualstack.eu-west-2.amazonaws.com/deb/key.txt \
+        | gpg --dearmor -o /etc/apt/keyrings/yggdrasil.gpg 2>/dev/null || true
+      echo "deb [signed-by=/etc/apt/keyrings/yggdrasil.gpg] http://neilalexander.s3.dualstack.eu-west-2.amazonaws.com/deb/ debian main" \
+        > /etc/apt/sources.list.d/yggdrasil.list
+      apt-get update -qq
+      apt-get install -y -qq yggdrasil
+    elif command -v dnf >/dev/null 2>&1; then
+      info "Installing Yggdrasil via dnf..."
+      dnf copr enable -y neilalexander/yggdrasil-go
+      dnf install -y yggdrasil
     else
       info "Installing Yggdrasil v${YGG_VERSION} from tarball..."
       url="https://github.com/yggdrasil-network/yggdrasil-go/releases/download/v${YGG_VERSION}/yggdrasil-${YGG_VERSION}-linux-${ARCH}.tar.gz"
       tmpdir="$(mktemp -d)"
+      trap 'rm -rf "$tmpdir"' EXIT
       curl -fsSL "$url" -o "${tmpdir}/yggdrasil.tar.gz"
       tar -xzf "${tmpdir}/yggdrasil.tar.gz" -C "${tmpdir}"
-      need_sudo cp "${tmpdir}/yggdrasil" /usr/local/bin/yggdrasil
-      need_sudo cp "${tmpdir}/yggdrasilctl" /usr/local/bin/yggdrasilctl
-      need_sudo chmod +x /usr/local/bin/yggdrasil /usr/local/bin/yggdrasilctl
+      cp "${tmpdir}/yggdrasil" /usr/local/bin/yggdrasil
+      cp "${tmpdir}/yggdrasilctl" /usr/local/bin/yggdrasilctl
+      chmod +x /usr/local/bin/yggdrasil /usr/local/bin/yggdrasilctl
       rm -rf "${tmpdir}"
+      trap - EXIT
     fi
   fi
 
-  ok "Yggdrasil v${YGG_VERSION} installed to /usr/local/bin/"
+  ok "Yggdrasil v${YGG_VERSION} installed"
 }
 
-# ── 4. Generate config ────────────────────────────────────────────────────────
+# ── 4. Generate / patch config ────────────────────────────────────────────────
 generate_config() {
-  if [ -f "$YGG_CONF" ]; then
-    warn "Existing config found at ${YGG_CONF} — checking..."
-  else
+  local needs_restart=false
+
+  if [ ! -f "$YGG_CONF" ]; then
     info "Generating Yggdrasil config..."
-    yggdrasil -genconf | need_sudo tee "$YGG_CONF" >/dev/null
+    yggdrasil -genconf > "$YGG_CONF"
+    needs_restart=true
   fi
 
-  # Patch: add TCP AdminListen (avoids UNIX socket permission issues)
-  local tmpconf needs_update=false
-  if grep -q "AdminListen" "$YGG_CONF"; then
-    if ! grep -q "tcp://${YGG_ADMIN_ADDR}" "$YGG_CONF"; then
-      tmpconf="$(mktemp)"
-      sed "s|AdminListen:.*|AdminListen: \"tcp://${YGG_ADMIN_ADDR}\"|" "$YGG_CONF" > "$tmpconf"
-      need_sudo cp "$tmpconf" "$YGG_CONF"
-      rm -f "$tmpconf"
-      needs_update=true
-    fi
+  # Read current config
+  local conf
+  conf="$(cat "$YGG_CONF")"
+
+  # Patch AdminListen → TCP (avoids UNIX socket permission issues)
+  if echo "$conf" | grep -q "tcp://${YGG_ADMIN_ADDR}"; then
+    ok "AdminListen already set to tcp://${YGG_ADMIN_ADDR}"
+  elif echo "$conf" | grep -q "AdminListen"; then
+    info "Patching AdminListen → tcp://${YGG_ADMIN_ADDR}"
+    conf="$(echo "$conf" | awk -v val="  AdminListen: \"tcp://${YGG_ADMIN_ADDR}\"" \
+      '/AdminListen:/{print val; next}{print}')"
+    needs_restart=true
   else
-    tmpconf="$(mktemp)"
-    sed "\$i\\  AdminListen: \"tcp://${YGG_ADMIN_ADDR}\"" "$YGG_CONF" > "$tmpconf"
-    need_sudo cp "$tmpconf" "$YGG_CONF"
-    rm -f "$tmpconf"
-    needs_update=true
+    info "Adding AdminListen: tcp://${YGG_ADMIN_ADDR}"
+    conf="$(echo "$conf" | awk -v val="  AdminListen: \"tcp://${YGG_ADMIN_ADDR}\"" \
+      '/^\}/{print val}{print}')"
+    needs_restart=true
   fi
 
-  # Patch: inject public peers if Peers list is empty
-  if grep -qE 'Peers:\s*\[\s*\]' "$YGG_CONF"; then
-    local peer_lines=""
-    for p in "${PUBLIC_PEERS[@]}"; do
-      peer_lines="${peer_lines}    \"${p}\"\n"
-    done
-    tmpconf="$(mktemp)"
-    sed "s|Peers: \[\]|Peers: [\n${peer_lines}  ]|" "$YGG_CONF" > "$tmpconf"
-    need_sudo cp "$tmpconf" "$YGG_CONF"
-    rm -f "$tmpconf"
-    needs_update=true
-  fi
-
-  if [ "$needs_update" = true ]; then
-    ok "Config updated at ${YGG_CONF} (admin: tcp://${YGG_ADMIN_ADDR})"
+  # Patch Peers → inject public peers if empty
+  if echo "$conf" | grep -qE 'Peers:\s*\[\s*\]'; then
+    info "Injecting ${#PUBLIC_PEERS[@]} public peers..."
+    local tmpfile
+    tmpfile="$(mktemp)"
+    local peer_replacement
+    peer_replacement="$(printf '  Peers: [\n'; for p in "${PUBLIC_PEERS[@]}"; do printf '    "%s"\n' "$p"; done; printf '  ]')"
+    echo "$conf" | while IFS= read -r line; do
+      if echo "$line" | grep -qE 'Peers:\s*\[\s*\]'; then
+        printf '%s\n' "$peer_replacement"
+      else
+        printf '%s\n' "$line"
+      fi
+    done > "$tmpfile"
+    conf="$(cat "$tmpfile")"
+    rm -f "$tmpfile"
+    needs_restart=true
   else
-    ok "Config already correct at ${YGG_CONF}"
+    ok "Peers list already populated"
   fi
+
+  # Write config back
+  if [ "$needs_restart" = true ]; then
+    echo "$conf" > "$YGG_CONF"
+    ok "Config written to ${YGG_CONF}"
+  fi
+
+  NEEDS_RESTART="$needs_restart"
 }
 
-# ── 5. Start/restart daemon ──────────────────────────────────────────────────
+# ── 5. Start / restart daemon ─────────────────────────────────────────────────
 start_daemon() {
   if [ "$PLATFORM" = "macos" ]; then
     local plist="/Library/LaunchDaemons/yggdrasil.plist"
     if [ ! -f "$plist" ]; then
       info "Creating LaunchDaemon plist..."
-      need_sudo tee "$plist" >/dev/null <<PLIST
+      cat > "$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -192,77 +220,82 @@ start_daemon() {
     <key>ProcessType</key>
     <string>Interactive</string>
     <key>StandardOutPath</key>
-    <string>/tmp/yggdrasil.stdout.log</string>
+    <string>/var/log/yggdrasil.stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/yggdrasil.stderr.log</string>
+    <string>/var/log/yggdrasil.stderr.log</string>
   </dict>
 </plist>
 PLIST
     fi
 
-    # Stop if running, then start
-    need_sudo launchctl unload "$plist" 2>/dev/null || true
+    launchctl unload "$plist" 2>/dev/null || true
     sleep 1
-    need_sudo launchctl load "$plist"
+    launchctl load "$plist"
 
   elif [ "$PLATFORM" = "linux" ]; then
     if command -v systemctl >/dev/null 2>&1; then
-      need_sudo systemctl restart yggdrasil
-      need_sudo systemctl enable yggdrasil
+      systemctl restart yggdrasil
+      systemctl enable yggdrasil 2>/dev/null || true
     else
-      warn "No systemd — start yggdrasil manually: sudo yggdrasil -useconffile ${YGG_CONF} &"
-      return
+      # Fallback: direct foreground start check, then background
+      if pgrep -x yggdrasil >/dev/null 2>&1; then
+        pkill -x yggdrasil || true
+        sleep 1
+      fi
+      yggdrasil -useconffile "$YGG_CONF" > /var/log/yggdrasil.log 2>&1 &
+      warn "Started yggdrasil in background (no systemd). PID: $!"
     fi
   fi
 
-  # Wait for daemon to start
-  info "Waiting for daemon..."
-  local attempts=0
-  while [ $attempts -lt 10 ]; do
-    sleep 1
-    attempts=$((attempts + 1))
-    if yggdrasilctl -json -endpoint "tcp://${YGG_ADMIN_ADDR}" getSelf >/dev/null 2>&1; then
-      break
-    fi
-  done
-
-  local addr
-  addr="$(yggdrasilctl -json -endpoint "tcp://${YGG_ADMIN_ADDR}" getSelf 2>/dev/null \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("address","???"))' 2>/dev/null || echo "???")"
-
-  if [ "$addr" = "???" ]; then
-    warn "Daemon started but could not read address. Check: /tmp/yggdrasil.stderr.log"
-  else
-    ok "Yggdrasil running — address: ${addr}"
-  fi
+  ok "Daemon start requested"
 }
 
 # ── 6. Verify ─────────────────────────────────────────────────────────────────
 verify() {
-  info "Verifying connectivity..."
-  local self
-  self="$(yggdrasilctl -json -endpoint "tcp://${YGG_ADMIN_ADDR}" getSelf 2>/dev/null || true)"
+  info "Waiting for daemon to come up..."
+  local attempts=0 self=""
+  while [ $attempts -lt 15 ]; do
+    sleep 1
+    attempts=$((attempts + 1))
+    self="$(yggdrasilctl -json -endpoint "tcp://${YGG_ADMIN_ADDR}" getSelf 2>/dev/null || true)"
+    if [ -n "$self" ]; then
+      break
+    fi
+  done
+
   if [ -z "$self" ]; then
-    warn "Cannot reach admin API at tcp://${YGG_ADMIN_ADDR}"
-    warn "Check daemon logs: /tmp/yggdrasil.stdout.log"
+    warn "Daemon did not respond after ${attempts}s"
+    if [ "$PLATFORM" = "macos" ]; then
+      warn "Check logs: /var/log/yggdrasil.stderr.log"
+    else
+      warn "Check logs: journalctl -u yggdrasil -n 20"
+    fi
     return 1
   fi
 
   local addr subnet
-  addr="$(echo "$self" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("address","n/a"))' 2>/dev/null)"
-  subnet="$(echo "$self" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("subnet","n/a"))' 2>/dev/null)"
+  addr="$(json_field "$self" "address")"
+  subnet="$(json_field "$self" "subnet")"
 
   echo ""
-  echo "  ┌────────────────────────────────────────────────┐"
-  echo "  │  Yggdrasil is ready                            │"
-  echo "  │  Address: ${addr}"
-  echo "  │  Subnet:  ${subnet}"
+  echo "  ┌────────────────────────────────────────────────────┐"
+  echo "  │  Yggdrasil is ready                                │"
+  echo "  │  Address: ${addr:-unknown}"
+  printf '  │  Subnet:  %s\n' "${subnet:-unknown}"
   echo "  │  Admin:   tcp://${YGG_ADMIN_ADDR}"
-  echo "  └────────────────────────────────────────────────┘"
+  echo "  └────────────────────────────────────────────────────┘"
   echo ""
-  info "Next: restart the OpenClaw gateway to pick up the daemon."
-  echo "  launchctl kickstart -k gui/\$(id -u)/ai.openclaw.gateway"
-  echo ""
+  if command -v openclaw >/dev/null 2>&1; then
+    info "Next: restart the OpenClaw gateway to pick up the daemon."
+    if [ "$PLATFORM" = "macos" ]; then
+      local uid
+      uid="$(stat -f %u /dev/console 2>/dev/null || echo "\$(id -u)")"
+      echo "  launchctl kickstart -k gui/${uid}/ai.openclaw.gateway"
+    else
+      echo "  openclaw gateway restart"
+    fi
+    echo ""
+  fi
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -270,10 +303,21 @@ main() {
   info "DeClaw — Yggdrasil setup"
   echo ""
 
+  check_root
   detect_platform
   check_existing || install_binary
   generate_config
-  start_daemon
+  if [ "${NEEDS_RESTART:-true}" = true ]; then
+    start_daemon
+  else
+    # Still restart if daemon isn't reachable
+    if ! yggdrasilctl -json -endpoint "tcp://${YGG_ADMIN_ADDR}" getSelf >/dev/null 2>&1; then
+      info "Daemon not reachable — restarting..."
+      start_daemon
+    else
+      ok "Daemon already running"
+    fi
+  fi
   verify
 }
 
