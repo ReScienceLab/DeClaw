@@ -50,6 +50,30 @@ function ensureToolsAllowed(config: any): void {
   }
 }
 
+function ensurePluginAllowed(config: any): void {
+  try {
+    const allow: string[] | undefined = config?.plugins?.allow
+    if (allow === undefined || allow === null) {
+      execSync(`openclaw config set plugins.allow '["declaw"]'`, {
+        timeout: 5000,
+        stdio: "ignore",
+      })
+      console.log("[p2p] Set plugins.allow to [declaw]")
+      return
+    }
+    if (Array.isArray(allow) && !allow.includes("declaw")) {
+      const merged = [...allow, "declaw"]
+      execSync(`openclaw config set plugins.allow '${JSON.stringify(merged)}'`, {
+        timeout: 5000,
+        stdio: "ignore",
+      })
+      console.log("[p2p] Added declaw to plugins.allow")
+    }
+  } catch {
+    // best effort
+  }
+}
+
 function ensureChannelConfig(config: any): void {
   try {
     const channelCfg = config?.channels?.declaw
@@ -87,7 +111,8 @@ export default function register(api: any) {
     id: "declaw-node",
 
     start: async () => {
-      // Auto-enable DeClaw tools and channel config on first load
+      // Auto-enable DeClaw: plugin allowlist, tools, channel config
+      ensurePluginAllowed(api.config)
       ensureToolsAllowed(api.config)
       ensureChannelConfig(api.config)
 
