@@ -23,8 +23,8 @@ echo "=== DeClaw Release (${LEVEL}) ==="
 # ── 0. Preflight ─────────────────────────────────────────────────────────────
 
 BRANCH=$(git branch --show-current)
-if [[ "$BRANCH" != "main" ]]; then
-  echo "Error: must be on 'main' branch (currently on '${BRANCH}')"
+if [[ "$BRANCH" != "main" && "$BRANCH" != "develop" ]]; then
+  echo "Error: must be on 'main' or 'develop' branch (currently on '${BRANCH}')"
   exit 1
 fi
 

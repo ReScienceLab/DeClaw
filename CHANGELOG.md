@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-03-04
+
 ### Added
 
 - Bootstrap nodes now run an always-on AI agent (`/peer/message` endpoint). New users can send messages to any bootstrap node and receive AI-powered replies, solving the cold-start problem when no real peers are online.
