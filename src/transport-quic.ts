@@ -171,8 +171,8 @@ export class UDPTransport implements Transport {
         })
       })
 
-      this._port = port
       const actualPort = this._socket.address().port
+      this._port = actualPort
 
       // Set up message handler
       this._socket.on("message", (msg, rinfo) => {
