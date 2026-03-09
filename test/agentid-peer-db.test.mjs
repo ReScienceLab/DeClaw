@@ -211,4 +211,13 @@ describe("findPeersByCapability", () => {
     // empty string prefix matches everything
     assert.equal(findPeersByCapability("").length, 2)
   })
+
+  it("clears capabilities when peer re-announces with empty array", () => {
+    const a = generateIdentity()
+    upsertDiscoveredPeer(a.agentId, a.publicKey, { capabilities: ["code:review"] })
+    assert.equal(findPeersByCapability("code:review").length, 1)
+    // peer withdraws capability
+    upsertDiscoveredPeer(a.agentId, a.publicKey, { capabilities: [] })
+    assert.equal(findPeersByCapability("code:review").length, 0)
+  })
 })

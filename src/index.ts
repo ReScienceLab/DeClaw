@@ -332,19 +332,23 @@ export default function register(api: any) {
       p2p
         .command("peers")
         .description("List known peers")
-        .action(() => {
-          const peers = listPeers()
+        .option("--capability <cap>", "Filter by capability (e.g. code:review or code:)")
+        .action((opts: { capability?: string }) => {
+          const peers = opts.capability ? findPeersByCapability(opts.capability) : listPeers()
           if (peers.length === 0) {
-            console.log("No peers yet. Use 'openclaw p2p add <agent-id>' to add one.")
+            console.log(opts.capability
+              ? `No peers with capability "${opts.capability}".`
+              : "No peers yet. Use 'openclaw p2p add <agent-id>' to add one.")
             return
           }
-          console.log("=== Known Peers ===")
+          console.log(opts.capability ? `=== Peers with capability "${opts.capability}" ===` : "=== Known Peers ===")
           for (const peer of peers) {
             const ago = Math.round((Date.now() - peer.lastSeen) / 1000)
             const label = peer.alias ? ` — ${peer.alias}` : ""
             const ver = peer.version ? ` [v${peer.version}]` : ""
             const transports = peer.endpoints?.map((e) => e.transport).join(",") || "none"
-            console.log(`  ${peer.agentId}${label}${ver}  [${transports}]  last seen ${ago}s ago`)
+            const caps = peer.capabilities?.length ? `  caps=[${peer.capabilities.join(",")}]` : ""
+            console.log(`  ${peer.agentId}${label}${ver}  [${transports}]${caps}  last seen ${ago}s ago`)
           }
         })
 
