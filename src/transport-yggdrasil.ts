@@ -79,14 +79,10 @@ export class YggdrasilTransport implements Transport {
     return this._active
   }
 
-  async send(target: string, data: Buffer): Promise<void> {
-    // Yggdrasil transport sends via HTTP — actual sending is done by peer-client
-    // This method is for raw transport-level sends if needed
-    for (const h of this._handlers) {
-      // In practice, Yggdrasil transport uses Fastify HTTP server for receiving
-      // This is a placeholder for direct transport-level messaging
-    }
-    throw new Error("YggdrasilTransport.send() not used directly — use peer-client HTTP")
+  async send(_target: string, _data: Buffer): Promise<void> {
+    // Yggdrasil messaging uses the HTTP peer-server/peer-client path, not raw
+    // transport-level sends. This is intentionally a no-op to satisfy the
+    // Transport interface contract without throwing.
   }
 
   onMessage(handler: (from: string, data: Buffer) => void): void {
