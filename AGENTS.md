@@ -1,6 +1,6 @@
 # DAP
 
-OpenClaw plugin for direct P2P communication between agent instances over Yggdrasil IPv6 mesh network. Messages are Ed25519-signed at the application layer; Yggdrasil provides cryptographic routing at the network layer.
+OpenClaw plugin for direct P2P communication between agent instances over plain HTTP/TCP. Messages are Ed25519-signed at the application layer; peers are identified by agentId (sha256 of public key).
 
 ## Core Commands
 
@@ -17,8 +17,7 @@ Always run build before tests — tests import from `dist/`.
 ```
 ├── src/                        → TypeScript plugin source
 │   ├── index.ts                → Plugin entry: service, channel, CLI, agent tools
-│   ├── identity.ts             → Ed25519 keypair, CGA/Yggdrasil address derivation
-│   ├── yggdrasil.ts            → Daemon management: detect external, spawn managed
+│   ├── identity.ts             → Ed25519 keypair, agentId derivation, DID key
 │   ├── peer-server.ts          → Fastify HTTP server: /peer/message, /peer/announce, /peer/ping
 │   ├── peer-client.ts          → Outbound signed message + ping
 │   ├── peer-discovery.ts       → Bootstrap + gossip DHT discovery loop
@@ -43,16 +42,14 @@ Always run build before tests — tests import from `dist/`.
 
 Plugin registers a background service (`dap-node`) that:
 1. Loads/creates an Ed25519 identity (`~/.openclaw/dap/identity.json`)
-2. Detects or spawns a Yggdrasil daemon for a routable `200::/7` address
-3. Starts a Fastify peer server on `[::]:8099`
-4. After 30s delay, bootstraps peer discovery via 5 global AWS nodes
-5. Runs periodic gossip loop (10min interval) to keep routing table fresh
+2. Starts a Fastify peer server on `[::]:8099`
+3. After 5s delay, bootstraps peer discovery via global AWS nodes
+4. Runs periodic gossip loop (10min interval) to keep routing table fresh
 
-Trust model (4-layer):
-1. TCP source IP must be Yggdrasil `200::/7` (network-layer)
-2. `fromYgg` in body must match TCP source IP (anti-spoofing)
-3. Ed25519 signature over canonical JSON (application-layer)
-4. TOFU: first message caches public key; subsequent must match
+Trust model (3-layer):
+1. Ed25519 signature over canonical JSON (application-layer)
+2. TOFU: first message caches public key; subsequent must match
+3. agentId derived from public key — unforgeable anchor identity
 
 ## Development Patterns
 
@@ -66,21 +63,18 @@ Trust model (4-layer):
 All runtime config is in `openclaw.json` under `plugins.entries.dap.config`:
 ```json
 {
-  "test_mode": "auto",
   "peer_port": 8099,
   "bootstrap_peers": [],
   "discovery_interval_ms": 600000,
-  "startup_delay_ms": 30000
+  "startup_delay_ms": 5000
 }
 ```
-`test_mode` is tri-state: `"auto"` (default) detects Yggdrasil, `true` forces local-only, `false` requires Yggdrasil.
 
 ### Bootstrap Nodes
 - 5 AWS EC2 t3.medium across us-east-2, us-west-2, eu-west-1, ap-northeast-1, ap-southeast-1
 - Managed via AWS SSM (no SSH) — IAM profile `openclaw-p2p-ssm-profile`
 - Deploy: `base64 -i bootstrap/server.mjs` → SSM send-command → restart systemd service
-- Yggdrasil config locked with `chattr +i` to prevent key regeneration
-- Nodes sync peer tables every 5min via sibling announce
+- Nodes sync peer tables every 5min via sibling announce (HTTP endpoints from bootstrap.json)
 
 ### Peer DB
 - JSON file at `$data_dir/peers.json`
@@ -140,7 +134,7 @@ No `develop` branch. No git-flow. No backmerge.
 
 When creating new issues:
 1. **Add type labels**: `bug`, `feature`, `enhancement`, `documentation`, `refactor`, `test`, `chore`
-2. **Add tag labels**: `priority:high` / `priority:medium` / `priority:low`, `good first issue`, `help wanted`, area tags (`bootstrap`, `p2p`, `yggdrasil`, etc.)
+2. **Add tag labels**: `priority:high` / `priority:medium` / `priority:low`, `good first issue`, `help wanted`, area tags (`bootstrap`, `p2p`, `identity`, etc.)
 3. **Write clear descriptions**: bugs include reproduction steps + expected vs actual; features describe use case and desired outcome
 
 ### PR Requirements
@@ -260,7 +254,8 @@ When adding a changeset, choose accordingly.
   B64_PKG=$(base64 -i bootstrap/package.json)
   # same loop, but commands: decode package.json + cd + npm install + restart
   ```
-- Verify: `curl -s http://[node-ygg-addr]:8099/peer/ping`
+- After deploying, update `docs/bootstrap.json` with the node's public HTTP address (`addr` field).
+- Verify: `curl -s http://<node-public-addr>:8099/peer/ping`
 
 ### Version-bearing Files
 
@@ -282,7 +277,5 @@ Semantic versioning: `vMAJOR.MINOR.PATCH`
 ## Security
 
 - Ed25519 private keys stored at `~/.openclaw/dap/identity.json` — never log or expose
-- Bootstrap nodes reject non-Yggdrasil source IPs (403)
 - TOFU key mismatch returns 403 with explicit error (possible key rotation)
-- Yggdrasil admin socket (`/var/run/yggdrasil.sock`) requires appropriate permissions
-- Plugin spawning Yggdrasil needs root for TUN device — prefer system daemon
+- Trust is entirely application-layer: Ed25519 signature + agentId binding
