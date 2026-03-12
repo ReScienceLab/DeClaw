@@ -248,3 +248,15 @@ export function getEndpointAddress(peer: DiscoveredPeerRecord, transport: string
     .sort((a, b) => a.priority - b.priority)[0]
   return ep?.address ?? null
 }
+
+/**
+ * Find peers that have a matching capability.
+ * Prefix match: "world:" matches "world:pixel-city", "world:dungeon", etc.
+ * Exact match: "world:pixel-city" matches only that capability.
+ * Returns peers sorted by lastSeen descending.
+ */
+export function findPeersByCapability(cap: string): DiscoveredPeerRecord[] {
+  return Object.values(store.peers)
+    .filter((p) => p.capabilities?.some((c) => c === cap || c.startsWith(cap)))
+    .sort((a, b) => b.lastSeen - a.lastSeen)
+}
