@@ -2,7 +2,7 @@
  * DHT-style peer discovery via Bootstrap + Gossip exchange.
  *
  * Flow:
- *   1. On startup, connect to bootstrap nodes (hardcoded + config)
+ *   1. On startup, connect to bootstrap nodes (fetched from remote JSON + config)
  *   2. POST /peer/announce to each bootstrap -> receive their peer list
  *   3. Add discovered peers to local store (keyed by agentId)
  *   4. Fanout: announce to a sample of newly-discovered peers (1 level deep)
@@ -16,7 +16,13 @@ import { listPeers, upsertDiscoveredPeer, getPeersForExchange, pruneStale } from
 const BOOTSTRAP_JSON_URL =
   "https://resciencelab.github.io/DAP/bootstrap.json"
 
-export async function fetchRemoteBootstrapPeers(): Promise<string[]> {
+export interface BootstrapNode {
+  addr: string      // plain HTTP hostname or IP (e.g. "1.2.3.4" or "bootstrap.example.com")
+  httpPort: number
+  udpPort?: number
+}
+
+export async function fetchRemoteBootstrapPeers(): Promise<BootstrapNode[]> {
   try {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 10_000)
@@ -24,22 +30,30 @@ export async function fetchRemoteBootstrapPeers(): Promise<string[]> {
     clearTimeout(timer)
     if (!resp.ok) return []
     const data = (await resp.json()) as {
-      bootstrap_nodes?: { yggAddr: string; port?: number }[]
+      bootstrap_nodes?: {
+        addr?: string
+        httpPort?: number
+        port?: number
+        udpPort?: number | null
+      }[]
     }
-    return (data.bootstrap_nodes ?? []).map((n) => n.yggAddr)
+    return (data.bootstrap_nodes ?? [])
+      .filter((n) => n.addr)
+      .map((n) => ({
+        addr: n.addr!,
+        httpPort: n.httpPort ?? n.port ?? 8099,
+        udpPort: n.udpPort || undefined,
+      }))
   } catch {
-    console.warn("[p2p:discovery] Could not fetch remote bootstrap list — using hardcoded fallback")
+    console.warn("[p2p:discovery] Could not fetch remote bootstrap list — using config peers only")
     return []
   }
 }
 
-export const DEFAULT_BOOTSTRAP_PEERS: string[] = [
-  "200:697f:bda:1e8e:706a:6c5e:630b:51d",
-  "200:e1a5:b063:958:8f74:ec45:8eb0:e30e",
-  "200:9cf6:eaf1:7d3e:14b0:5869:2140:b618",
-  "202:adbc:dde1:e272:1cdb:97d0:8756:4f77",
-  "200:5ec6:62dd:9e91:3752:820c:98f5:5863",
-]
+// Default bootstrap nodes (public HTTP addresses).
+// These are populated by the bootstrap.json served from GitHub Pages.
+// Add entries here once the AWS nodes are configured with public HTTP addresses.
+export const DEFAULT_BOOTSTRAP_PEERS: BootstrapNode[] = []
 
 const EXCHANGE_TIMEOUT_MS = 30_000
 const MAX_FANOUT_PEERS = 5
@@ -73,10 +87,8 @@ function buildAnnouncement(
 
 /** Extract the host portion from an endpoint address (strip port if present). */
 function hostFromAddress(addr: string): string {
-  // [ipv6]:port → ipv6
   const bracketMatch = addr.match(/^\[([^\]]+)\]:(\d+)$/)
   if (bracketMatch) return bracketMatch[1]
-  // ipv4:port → ipv4 (only if exactly one colon)
   const parts = addr.split(":")
   if (parts.length === 2 && /^\d+$/.test(parts[1])) return parts[0]
   return addr
@@ -105,7 +117,7 @@ export async function announceToNode(
   const signature = signMessage(identity.privateKey, payload)
   const announcement = { ...payload, signature }
 
-  const isIpv6 = targetAddr.includes(":")
+  const isIpv6 = targetAddr.includes(":") && !targetAddr.includes(".")
   const url = isIpv6
     ? `http://[${targetAddr}]:${port}/peer/announce`
     : `http://${targetAddr}:${port}/peer/announce`
@@ -159,28 +171,38 @@ export async function announceToNode(
 export async function bootstrapDiscovery(
   identity: Identity,
   port: number = 8099,
-  extraBootstrap: string[] = [],
+  extraBootstrap: string[] | BootstrapNode[] = [],
   meta: { name?: string; version?: string; endpoints?: Endpoint[] } = {}
 ): Promise<number> {
-  const remotePeers = await fetchRemoteBootstrapPeers()
-  const bootstrapAddrs = [
-    ...new Set([...remotePeers, ...DEFAULT_BOOTSTRAP_PEERS, ...extraBootstrap]),
-  ].filter((a) => a && a !== identity.yggIpv6 && a !== identity.agentId)
+  const remoteNodes = await fetchRemoteBootstrapPeers()
+  const normalizedExtra: BootstrapNode[] = (extraBootstrap as any[]).map((e) =>
+    typeof e === "string" ? { addr: e, httpPort: port } : e
+  )
 
-  if (bootstrapAddrs.length === 0) {
+  const seen = new Set<string>()
+  const bootstrapNodes: BootstrapNode[] = []
+  for (const n of [...remoteNodes, ...DEFAULT_BOOTSTRAP_PEERS, ...normalizedExtra]) {
+    const key = n.addr
+    if (!key) continue
+    if (seen.has(key)) continue
+    seen.add(key)
+    bootstrapNodes.push(n)
+  }
+
+  if (bootstrapNodes.length === 0) {
     console.log("[p2p:discovery] No bootstrap nodes configured — skipping initial discovery.")
     return 0
   }
 
-  console.log(`[p2p:discovery] Bootstrapping via ${bootstrapAddrs.length} node(s) (parallel)...`)
+  console.log(`[p2p:discovery] Bootstrapping via ${bootstrapNodes.length} node(s) (parallel)...`)
 
   let totalDiscovered = 0
   const fanoutCandidates: Array<{ addr: string }> = []
 
   const results = await Promise.allSettled(
-    bootstrapAddrs.map(async (addr) => {
-      const peers = await announceToNode(identity, addr, port, meta)
-      return { addr, peers }
+    bootstrapNodes.map(async (node) => {
+      const peers = await announceToNode(identity, node.addr, node.httpPort, meta)
+      return { addr: node.addr, peers }
     })
   )
 
@@ -236,12 +258,15 @@ export function startDiscoveryLoop(
   identity: Identity,
   port: number = 8099,
   intervalMs: number = 10 * 60 * 1000,
-  extraBootstrap: string[] = [],
+  extraBootstrap: string[] | BootstrapNode[] = [],
   meta: { name?: string; version?: string; endpoints?: Endpoint[] } = {}
 ): void {
   if (_discoveryTimer) return
 
-  const protectedAddrs = [...new Set([...DEFAULT_BOOTSTRAP_PEERS, ...extraBootstrap])]
+  const normalizedExtra: BootstrapNode[] = (extraBootstrap as any[]).map((e) =>
+    typeof e === "string" ? { addr: e, httpPort: port } : e
+  )
+  const protectedAddrs = normalizedExtra.map((n) => n.addr).filter(Boolean)
 
   const runGossip = async () => {
     pruneStale(3 * intervalMs, protectedAddrs)

@@ -1,15 +1,17 @@
 /**
  * P2P peer HTTP server listening on [::]:8099.
  *
- * Trust model (transport-agnostic):
- *   Layer 1 — Transport security (TLS/Yggdrasil/WireGuard — handled by transport)
- *   Layer 2 — Ed25519 signature (universal trust anchor)
- *   Layer 3 — TOFU: agentId -> publicKey binding
+ * Trust model:
+ *   Layer 1 — Ed25519 signature (universal trust anchor)
+ *   Layer 2 — TOFU: agentId -> publicKey binding
+ *
+ * All source IP filtering has been removed. Trust is established at the
+ * application layer via Ed25519 signatures, not at the network layer.
  */
 import Fastify, { FastifyInstance } from "fastify"
 import { P2PMessage, Endpoint } from "./types"
 import { verifySignature, agentIdFromPublicKey } from "./identity"
-import { tofuVerifyAndCache, getPeersForExchange, upsertDiscoveredPeer, removePeer } from "./peer-db"
+import { tofuVerifyAndCache, tofuReplaceKey, getPeersForExchange, upsertDiscoveredPeer, removePeer, getPeer } from "./peer-db"
 
 const MAX_MESSAGE_AGE_MS = 5 * 60 * 1000 // 5 minutes
 
@@ -46,17 +48,7 @@ function canonical(msg: P2PMessage): Record<string, unknown> {
   }
 }
 
-export function isYggdrasilAddr(addr: string): boolean {
-  const clean = addr.replace(/^::ffff:/, "")
-  return /^2[0-9a-f]{2}:/i.test(clean)
-}
-
-export async function startPeerServer(
-  port: number = 8099,
-  opts: { testMode?: boolean; yggdrasilActive?: boolean } = {}
-): Promise<void> {
-  const testMode = opts.testMode ?? false
-  const yggActive = opts.yggdrasilActive ?? false
+export async function startPeerServer(port: number = 8099): Promise<void> {
   server = Fastify({ logger: false })
 
   server.get("/peer/ping", async () => ({ ok: true, ts: Date.now() }))
@@ -65,12 +57,6 @@ export async function startPeerServer(
 
   server.post("/peer/announce", async (req, reply) => {
     const ann = req.body as any
-    const srcIp = (req.socket.remoteAddress ?? "").replace(/^::ffff:/, "")
-
-    // Network-layer gate: when Yggdrasil is active, only accept from 200::/7
-    if (yggActive && !testMode && !isYggdrasilAddr(srcIp)) {
-      return reply.code(403).send({ error: `Non-Yggdrasil source ${srcIp} rejected` })
-    }
 
     const { signature, ...signable } = ann
     if (!verifySignature(ann.publicKey, signable as Record<string, unknown>, signature)) {
@@ -82,7 +68,8 @@ export async function startPeerServer(
       return reply.code(400).send({ error: "Missing 'from' (agentId)" })
     }
 
-    if (agentIdFromPublicKey(ann.publicKey) !== agentId) {
+    const knownPeer = getPeer(agentId)
+    if (!knownPeer?.publicKey && agentIdFromPublicKey(ann.publicKey) !== agentId) {
       return reply.code(400).send({ error: "agentId does not match publicKey" })
     }
 
@@ -117,11 +104,6 @@ export async function startPeerServer(
 
   server.post("/peer/message", async (req, reply) => {
     const raw = req.body as any
-    const srcIp = (req.socket.remoteAddress ?? "").replace(/^::ffff:/, "")
-
-    if (yggActive && !testMode && !isYggdrasilAddr(srcIp)) {
-      return reply.code(403).send({ error: `Non-Yggdrasil source ${srcIp} rejected` })
-    }
 
     const sigData = canonical(raw)
     if (!verifySignature(raw.publicKey, sigData, raw.signature)) {
@@ -133,7 +115,8 @@ export async function startPeerServer(
       return reply.code(400).send({ error: "Missing 'from' (agentId)" })
     }
 
-    if (agentIdFromPublicKey(raw.publicKey) !== agentId) {
+    const knownPeer = getPeer(agentId)
+    if (!knownPeer?.publicKey && agentIdFromPublicKey(raw.publicKey) !== agentId) {
       return reply.code(400).send({ error: "agentId does not match publicKey" })
     }
 
@@ -172,8 +155,44 @@ export async function startPeerServer(
     return { ok: true }
   })
 
+  server.post("/peer/key-rotation", async (req, reply) => {
+    const rot = req.body as any
+
+    if (!rot.agentId || !rot.oldPublicKey || !rot.newPublicKey || !rot.signatureByOldKey || !rot.signatureByNewKey) {
+      return reply.code(400).send({ error: "Missing required key rotation fields" })
+    }
+
+    if (agentIdFromPublicKey(rot.oldPublicKey) !== rot.agentId) {
+      return reply.code(400).send({ error: "agentId does not match oldPublicKey" })
+    }
+
+    if (rot.timestamp && Math.abs(Date.now() - rot.timestamp) > MAX_MESSAGE_AGE_MS) {
+      return reply.code(400).send({ error: "Key rotation timestamp too old or too far in the future" })
+    }
+
+    const signable = {
+      agentId: rot.agentId,
+      oldPublicKey: rot.oldPublicKey,
+      newPublicKey: rot.newPublicKey,
+      timestamp: rot.timestamp,
+    }
+
+    if (!verifySignature(rot.oldPublicKey, signable, rot.signatureByOldKey)) {
+      return reply.code(403).send({ error: "Invalid signatureByOldKey" })
+    }
+
+    if (!verifySignature(rot.newPublicKey, signable, rot.signatureByNewKey)) {
+      return reply.code(403).send({ error: "Invalid signatureByNewKey" })
+    }
+
+    tofuReplaceKey(rot.agentId, rot.newPublicKey)
+    console.log(`[p2p] key-rotation  agentId=${rot.agentId}  newKey=${rot.newPublicKey.slice(0, 16)}...`)
+
+    return { ok: true }
+  })
+
   await server.listen({ port, host: "::" })
-  console.log(`[p2p] Peer server listening on [::]:${port}${testMode ? " (test mode)" : ""}`)
+  console.log(`[p2p] Peer server listening on [::]:${port}`)
 }
 
 export async function stopPeerServer(): Promise<void> {
@@ -203,7 +222,8 @@ export function handleUdpMessage(data: Buffer, from: string): boolean {
     return false
   }
 
-  if (agentIdFromPublicKey(raw.publicKey) !== raw.from) {
+  const knownPeer = getPeer(raw.from)
+  if (!knownPeer?.publicKey && agentIdFromPublicKey(raw.publicKey) !== raw.from) {
     return false
   }
 

@@ -13,30 +13,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Yggdrasil
-        run: |
-          sudo mkdir -p /usr/local/apt-keys
-          gpg --fetch-keys https://neilalexander.s3.dualstack.eu-west-2.amazonaws.com/deb/key.txt
-          gpg --export 1C5162E133015D81A811239D1840CDAC6011C5EA | sudo tee /usr/local/apt-keys/yggdrasil-keyring.gpg > /dev/null
-          echo 'deb [signed-by=/usr/local/apt-keys/yggdrasil-keyring.gpg] http://neilalexander.s3.dualstack.eu-west-2.amazonaws.com/deb/ debian yggdrasil' \
-            | sudo tee /etc/apt/sources.list.d/yggdrasil.list
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq yggdrasil
-          yggdrasil -version
-
-      - name: Generate config with public peers
-        run: |
-          sudo yggdrasil -genconf | sudo tee /etc/yggdrasil.conf >/dev/null
-          # Inject public peers for mesh connectivity
-          sudo sed -i 's|Peers: \[\]|Peers: [\n    "tcp://yggdrasil.mnpnk.com:10002"\n    "tcp://ygg.mkg20001.io:80"\n    "tcp://46.246.86.205:60002"\n  ]|' /etc/yggdrasil.conf
-
-      - name: Start Yggdrasil daemon
-        run: |
-          sudo yggdrasil -useconffile /etc/yggdrasil.conf &
-          sleep 10
-          sudo yggdrasilctl getSelf || echo "Warning: getSelf failed"
-          sudo yggdrasilctl getPeers || echo "Warning: no peers yet"
-
       - name: Fetch bootstrap node list
         id: bootstrap
         run: |
@@ -45,27 +21,45 @@ jobs:
           import json, sys
           d = json.load(sys.stdin)
           nodes = d['bootstrap_nodes']
-          print(f'::notice::Found {len(nodes)} bootstrap nodes (updated: {d[\"updated\"]})')
+          active = [n for n in nodes if n.get('addr')]
+          print(f'::notice::Found {len(nodes)} bootstrap nodes ({len(active)} with addr), updated: {d[\"updated\"]}')
           for n in nodes:
-              print(f'{n[\"label\"]}: [{n[\"yggAddr\"]}]:{n[\"port\"]}')
+              addr = n.get('addr') or '(not configured)'
+              port = n.get('httpPort', 8099)
+              print(f'{n[\"label\"]}: {addr}:{port}')
           "
 
       - name: Health check all bootstrap nodes
         run: |
           FAILED=0
           TOTAL=0
+          SKIPPED=0
 
           while IFS= read -r line; do
-            ADDR=$(echo "$line" | python3 -c "import json,sys; n=json.loads(sys.stdin.read()); print(n['yggAddr'])")
-            PORT=$(echo "$line" | python3 -c "import json,sys; n=json.loads(sys.stdin.read()); print(n['port'])")
+            ADDR=$(echo "$line" | python3 -c "import json,sys; n=json.loads(sys.stdin.read()); print(n.get('addr') or '')")
+            PORT=$(echo "$line" | python3 -c "import json,sys; n=json.loads(sys.stdin.read()); print(n.get('httpPort', 8099))")
             LABEL=$(echo "$line" | python3 -c "import json,sys; n=json.loads(sys.stdin.read()); print(n['label'])")
-            TOTAL=$((TOTAL + 1))
 
             echo "--- ${LABEL} ---"
 
+            if [ -z "$ADDR" ]; then
+              echo "  - skipped (addr not configured)"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+
+            TOTAL=$((TOTAL + 1))
+
+            # Build URL — bracket IPv6 addresses
+            if echo "$ADDR" | grep -q ':'; then
+              BASE_URL="http://[${ADDR}]:${PORT}"
+            else
+              BASE_URL="http://${ADDR}:${PORT}"
+            fi
+
             # 1. Ping endpoint
-            PING=$(curl -6 -sf --connect-timeout 15 --max-time 20 \
-              "http://[${ADDR}]:${PORT}/peer/ping" 2>/dev/null || echo "FAIL")
+            PING=$(curl -sf --connect-timeout 15 --max-time 20 \
+              "${BASE_URL}/peer/ping" 2>/dev/null || echo "FAIL")
             if [ "$PING" = "FAIL" ]; then
               echo "  ✗ /peer/ping — unreachable"
               FAILED=$((FAILED + 1))
@@ -74,8 +68,8 @@ jobs:
             echo "  ✓ /peer/ping — ${PING}"
 
             # 2. Peers endpoint
-            PEERS=$(curl -6 -sf --connect-timeout 15 --max-time 20 \
-              "http://[${ADDR}]:${PORT}/peer/peers" 2>/dev/null || echo "FAIL")
+            PEERS=$(curl -sf --connect-timeout 15 --max-time 20 \
+              "${BASE_URL}/peer/peers" 2>/dev/null || echo "FAIL")
             if [ "$PEERS" = "FAIL" ]; then
               echo "  ✗ /peer/peers — unreachable"
             else
@@ -92,10 +86,15 @@ jobs:
           ")
 
           echo ""
-          echo "=== Summary: ${TOTAL} nodes checked, ${FAILED} failed ==="
+          echo "=== Summary: ${TOTAL} nodes checked, ${FAILED} failed, ${SKIPPED} skipped (addr pending) ==="
 
           if [ "$FAILED" -gt 0 ]; then
             echo "::warning::${FAILED}/${TOTAL} bootstrap nodes unreachable"
+          fi
+
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "::notice::All bootstrap nodes are pending addr configuration — skipping threshold check"
+            exit 0
           fi
 
           # Fail the workflow if more than half are down
