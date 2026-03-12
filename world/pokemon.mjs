@@ -640,6 +640,79 @@ fastify.post("/peer/message", async (req, reply) => {
 });
 
 // ---------------------------------------------------------------------------
+// Browser convenience endpoints (no DAP signature required, for local play)
+// ---------------------------------------------------------------------------
+
+// Serve static web files
+import { fileURLToPath } from "node:url";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const webDir = path.join(__dirname, "..", "web");
+
+fastify.get("/pokemon", async (req, reply) => {
+  try {
+    const html = fs.readFileSync(path.join(webDir, "pokemon.html"), "utf8");
+    return reply.type("text/html").send(html);
+  } catch { return reply.code(404).send("pokemon.html not found in web/"); }
+});
+fastify.get("/pokemon-client.js", async (req, reply) => {
+  try {
+    const js = fs.readFileSync(path.join(webDir, "pokemon-client.js"), "utf8");
+    return reply.type("application/javascript").send(js);
+  } catch { return reply.code(404).send(""); }
+});
+fastify.get("/pokemon-style.css", async (req, reply) => {
+  try {
+    const css = fs.readFileSync(path.join(webDir, "pokemon-style.css"), "utf8");
+    return reply.type("text/css").send(css);
+  } catch { return reply.code(404).send(""); }
+});
+
+// Browser sessions (no DAP identity needed)
+const browserSessions = new Map(); // sessionId -> BattleSession
+
+fastify.post("/play/join", async (req) => {
+  const { alias, sessionId: existingId } = req.body ?? {};
+  // Reuse existing session if provided
+  if (existingId && browserSessions.has(existingId)) {
+    const session = browserSessions.get(existingId);
+    return { ok: true, sessionId: existingId, battleId: session.battleId, manifest: MANIFEST, state: session.getState() };
+  }
+  const sessionId = crypto.randomUUID();
+  const name = (alias ?? "Player").slice(0, 20);
+  const session = new BattleSession(sessionId, name);
+  browserSessions.set(sessionId, session);
+  addEvent("join", { sessionId, alias: name, worldId: WORLD_ID, battleId: session.battleId });
+  console.log(`[pokemon] Browser ${name} joined — battle ${session.battleId.slice(0, 8)}`);
+  await new Promise(r => setTimeout(r, 150));
+  return { ok: true, sessionId, battleId: session.battleId, manifest: MANIFEST, state: session.getState() };
+});
+
+fastify.post("/play/action", async (req, reply) => {
+  const { sessionId, action, slot } = req.body ?? {};
+  if (!sessionId) return reply.code(400).send({ ok: false, error: "Missing sessionId" });
+  const session = browserSessions.get(sessionId);
+  if (!session) return reply.code(400).send({ ok: false, error: "Session not found. Join first." });
+  if (!action) return reply.code(400).send({ ok: false, error: 'Missing "action" field.' });
+  if (slot == null) return reply.code(400).send({ ok: false, error: 'Missing "slot" field.' });
+  const result = session.submitAction(action, slot);
+  await new Promise(r => setTimeout(r, 150));
+  return { ...result, state: session.getState() };
+});
+
+fastify.post("/play/new", async (req) => {
+  const { sessionId } = req.body ?? {};
+  if (sessionId && browserSessions.has(sessionId)) {
+    browserSessions.delete(sessionId);
+  }
+  const newId = crypto.randomUUID();
+  const session = new BattleSession(newId, "Player");
+  browserSessions.set(newId, session);
+  console.log(`[pokemon] New battle ${session.battleId.slice(0, 8)}`);
+  await new Promise(r => setTimeout(r, 150));
+  return { ok: true, sessionId: newId, battleId: session.battleId, manifest: MANIFEST, state: session.getState() };
+});
+
+// ---------------------------------------------------------------------------
 // Startup
 // ---------------------------------------------------------------------------
 
