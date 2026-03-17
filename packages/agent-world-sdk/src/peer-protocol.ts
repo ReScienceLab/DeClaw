@@ -38,6 +38,23 @@ export function registerPeerRoutes(
 ): void {
   const { identity, peerDb, pingExtra, onMessage, card } = opts
 
+  // Custom JSON parser that preserves the raw body string for digest verification.
+  // The raw bytes are stored on req.rawBody so verifyHttpRequestHeaders can check
+  // Content-Digest against exactly what the sender transmitted.
+  fastify.decorateRequest("rawBody", "")
+  fastify.addContentTypeParser(
+    "application/json",
+    { parseAs: "string" },
+    (req, body, done) => {
+      try {
+        ;(req as unknown as { rawBody: string }).rawBody = body as string
+        done(null, JSON.parse(body as string))
+      } catch (err) {
+        done(err as Error, undefined)
+      }
+    }
+  )
+
   // Sign all /peer/* JSON responses (P2a — AgentWire v0.2 response signing)
   fastify.addHook("onSend", async (_req, reply, payload) => {
     if (typeof payload !== "string") return payload
@@ -87,7 +104,7 @@ export function registerPeerRoutes(
 
     const awSig = req.headers["x-agentwire-signature"]
     if (awSig) {
-      const rawBody = JSON.stringify(canonicalize(ann))
+      const rawBody = (req as unknown as { rawBody: string }).rawBody
       const authority = (req.headers["host"] as string) ?? "localhost"
       const result = verifyHttpRequestHeaders(
         req.headers as Record<string, string>,
@@ -120,7 +137,7 @@ export function registerPeerRoutes(
 
     const awSig = req.headers["x-agentwire-signature"]
     if (awSig) {
-      const rawBody = JSON.stringify(canonicalize(msg))
+      const rawBody = (req as unknown as { rawBody: string }).rawBody
       const authority = (req.headers["host"] as string) ?? "localhost"
       const result = verifyHttpRequestHeaders(
         req.headers as Record<string, string>,
