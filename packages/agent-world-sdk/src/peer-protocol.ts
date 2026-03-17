@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify"
-import { agentIdFromPublicKey, verifySignature } from "./crypto.js"
+import { agentIdFromPublicKey, canonicalize, verifySignature, verifyHttpRequestHeaders } from "./crypto.js"
 import type { Identity } from "./types.js"
 import type { PeerDb as PeerDbType } from "./peer-db.js"
 
@@ -46,10 +46,23 @@ export function registerPeerRoutes(
     if (!ann?.publicKey || !ann?.from) {
       return reply.code(400).send({ error: "Invalid announce" })
     }
-    const { signature, ...signable } = ann
-    if (!verifySignature(ann.publicKey as string, signable, signature as string)) {
-      return reply.code(403).send({ error: "Invalid signature" })
+
+    const awSig = req.headers["x-agentwire-signature"]
+    if (awSig) {
+      const rawBody = JSON.stringify(canonicalize(ann))
+      const authority = (req.headers["host"] as string) ?? "localhost"
+      const result = verifyHttpRequestHeaders(
+        req.headers as Record<string, string>,
+        req.method, req.url, authority, rawBody, ann.publicKey as string
+      )
+      if (!result.ok) return reply.code(403).send({ error: result.error })
+    } else {
+      const { signature, ...signable } = ann
+      if (!verifySignature(ann.publicKey as string, signable, signature as string)) {
+        return reply.code(403).send({ error: "Invalid signature" })
+      }
     }
+
     if (agentIdFromPublicKey(ann.publicKey as string) !== ann.from) {
       return reply.code(400).send({ error: "agentId does not match publicKey" })
     }
@@ -66,9 +79,21 @@ export function registerPeerRoutes(
     if (!msg?.publicKey || !msg?.from) {
       return reply.code(400).send({ error: "Invalid message" })
     }
-    const { signature, ...signable } = msg
-    if (!verifySignature(msg.publicKey as string, signable, signature as string)) {
-      return reply.code(403).send({ error: "Invalid signature" })
+
+    const awSig = req.headers["x-agentwire-signature"]
+    if (awSig) {
+      const rawBody = JSON.stringify(canonicalize(msg))
+      const authority = (req.headers["host"] as string) ?? "localhost"
+      const result = verifyHttpRequestHeaders(
+        req.headers as Record<string, string>,
+        req.method, req.url, authority, rawBody, msg.publicKey as string
+      )
+      if (!result.ok) return reply.code(403).send({ error: result.error })
+    } else {
+      const { signature, ...signable } = msg
+      if (!verifySignature(msg.publicKey as string, signable, signature as string)) {
+        return reply.code(403).send({ error: "Invalid signature" })
+      }
     }
 
     const agentId = msg.from as string

@@ -1,4 +1,5 @@
-export { agentIdFromPublicKey, canonicalize, verifySignature, signPayload } from "./crypto.js"
+export { agentIdFromPublicKey, canonicalize, verifySignature, signPayload, computeContentDigest, signHttpRequest, verifyHttpRequestHeaders } from "./crypto.js"
+export type { AwRequestHeaders } from "./crypto.js"
 export { loadOrCreateIdentity } from "./identity.js"
 export { PeerDb } from "./peer-db.js"
 export { fetchBootstrapNodes, announceToNode, startDiscovery } from "./bootstrap.js"
