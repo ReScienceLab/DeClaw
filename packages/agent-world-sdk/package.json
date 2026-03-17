@@ -18,7 +18,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "prepare": "npm run build"
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "dap",
