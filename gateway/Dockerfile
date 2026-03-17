@@ -4,10 +4,9 @@
 FROM node:22-alpine AS sdk-builder
 WORKDIR /app/packages/agent-world-sdk
 COPY packages/agent-world-sdk/package*.json ./
-RUN npm ci
 COPY packages/agent-world-sdk/src ./src
 COPY packages/agent-world-sdk/tsconfig.json ./
-RUN npm run build
+RUN npm ci && npm run build
 
 # ── Stage 2: gateway runtime ─────────────────────────────────────────────────
 FROM node:22-alpine
