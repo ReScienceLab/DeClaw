@@ -1,5 +1,5 @@
 /**
- * P2a — AgentWorld v0.2 response signing
+ * P2a — AgentWorld response signing
  *
  * Verifies that /peer/* endpoints include X-AgentWorld-Signature,
  * X-AgentWorld-From, Content-Digest and other required headers, and that

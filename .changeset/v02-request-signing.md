@@ -2,6 +2,6 @@
 "@resciencelab/dap": minor
 ---
 
-feat: align request signing with AgentWire v0.2 spec
+feat: AgentWorld HTTP request signing with X-AgentWorld-* headers
 
-Outbound HTTP requests now include X-AgentWorld-* headers with method/path/authority/Content-Digest binding for cross-endpoint replay resistance. Server verifies v0.2 header signatures when present, falling back to legacy body-only signatures for backward compatibility.
+Outbound HTTP requests include X-AgentWorld-* headers with method/path/authority/Content-Digest binding for cross-endpoint replay resistance. Header signatures are required — no legacy body-only fallback.

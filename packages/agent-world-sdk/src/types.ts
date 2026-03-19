@@ -186,7 +186,7 @@ export interface LedgerQueryOpts {
   limit?: number
 }
 
-// ── Key rotation (AgentWorld v0.2 §6.10/§10.4) ────────────────────────────────
+// ── Key rotation ──────────────────────────────────────────────────────────────
 
 export interface KeyRotationIdentity {
   agentId: string

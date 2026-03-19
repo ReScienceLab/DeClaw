@@ -130,7 +130,7 @@ export function signPayload(payload: unknown, secretKey: Uint8Array): string {
   return Buffer.from(sig).toString("base64");
 }
 
-// ── AgentWorld v0.2 HTTP header signing ───────────────────────────────────────
+// ── AgentWorld HTTP header signing ─────────────────────────────────────────────
 
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
@@ -173,7 +173,7 @@ function buildRequestSigningInput(opts: {
 }
 
 /**
- * Produce AgentWorld v0.2 HTTP request signing headers.
+ * Produce AgentWorld HTTP request signing headers.
  * Include alongside Content-Type in outbound fetch calls.
  */
 export function signHttpRequest(
@@ -211,7 +211,7 @@ export function signHttpRequest(
 }
 
 /**
- * Verify AgentWorld v0.2 HTTP request headers.
+ * Verify AgentWorld HTTP request headers.
  * Returns { ok: true } if valid, { ok: false, error } otherwise.
  */
 export function verifyHttpRequestHeaders(
@@ -269,7 +269,7 @@ export function verifyHttpRequestHeaders(
     : { ok: false, error: "Invalid X-AgentWorld-Signature" };
 }
 
-// ── AgentWorld v0.2 HTTP response signing ─────────────────────────────────────
+// ── AgentWorld HTTP response signing ───────────────────────────────────────────
 
 export interface AwResponseHeaders {
   "X-AgentWorld-Version": string;
@@ -298,7 +298,7 @@ function buildResponseSigningInput(opts: {
 }
 
 /**
- * Produce AgentWorld v0.2 HTTP response signing headers.
+ * Produce AgentWorld HTTP response signing headers.
  * Add to Fastify reply before sending the body.
  */
 export function signHttpResponse(
@@ -332,7 +332,7 @@ export function signHttpResponse(
 }
 
 /**
- * Verify AgentWorld v0.2 HTTP response headers from an inbound response.
+ * Verify AgentWorld HTTP response headers from an inbound response.
  * Returns { ok: true } if valid, { ok: false, error } otherwise.
  */
 export function verifyHttpResponseHeaders(

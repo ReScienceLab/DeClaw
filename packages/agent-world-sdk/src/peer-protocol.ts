@@ -63,7 +63,7 @@ export function registerPeerRoutes(
     }
   );
 
-  // Sign all /peer/* JSON responses (P2a — AgentWorld v0.2 response signing)
+  // Sign all /peer/* JSON responses
   fastify.addHook("onSend", async (_req, reply, payload) => {
     if (typeof payload !== "string") return payload;
     const url = (_req.url ?? "").split("?")[0];
@@ -230,7 +230,7 @@ export function registerPeerRoutes(
     }
   });
 
-  // POST /peer/key-rotation — AgentWorld v0.2 §6.10/§10.4
+  // POST /peer/key-rotation
   fastify.post("/peer/key-rotation", async (req, reply) => {
     const rot = req.body as unknown as KeyRotationRequest;
 

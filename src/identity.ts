@@ -129,7 +129,51 @@ export function verifySignature(
   }
 }
 
-// ── AgentWorld v0.2 HTTP header signing (§6.6/§6.7) ────────────────────────
+// ── Domain-Separated Signatures ─────────────────────────────────────────────
+
+export const DOMAIN_SEPARATORS = {
+  HTTP_REQUEST: `AgentWorld-Req-${PROTOCOL_VERSION}\0`,
+  HTTP_RESPONSE: `AgentWorld-Res-${PROTOCOL_VERSION}\0`,
+  AGENT_CARD: `AgentWorld-Card-${PROTOCOL_VERSION}\0`,
+  KEY_ROTATION: `AgentWorld-Rotation-${PROTOCOL_VERSION}\0`,
+  ANNOUNCE: `AgentWorld-Announce-${PROTOCOL_VERSION}\0`,
+  MESSAGE: `AgentWorld-Message-${PROTOCOL_VERSION}\0`,
+  WORLD_STATE: `AgentWorld-WorldState-${PROTOCOL_VERSION}\0`,
+} as const
+
+export function signWithDomainSeparator(
+  domainSeparator: string,
+  payload: unknown,
+  secretKey: Uint8Array
+): string {
+  const canonicalJson = JSON.stringify(canonicalize(payload))
+  const domainPrefix = Buffer.from(domainSeparator, "utf8")
+  const payloadBytes = Buffer.from(canonicalJson, "utf8")
+  const message = Buffer.concat([domainPrefix, payloadBytes])
+  const sig = nacl.sign.detached(message, secretKey)
+  return Buffer.from(sig).toString("base64")
+}
+
+export function verifyWithDomainSeparator(
+  domainSeparator: string,
+  publicKeyB64: string,
+  payload: unknown,
+  signatureB64: string
+): boolean {
+  try {
+    const canonicalJson = JSON.stringify(canonicalize(payload))
+    const domainPrefix = Buffer.from(domainSeparator, "utf8")
+    const payloadBytes = Buffer.from(canonicalJson, "utf8")
+    const message = Buffer.concat([domainPrefix, payloadBytes])
+    const pubKey = Buffer.from(publicKeyB64, "base64")
+    const sig = Buffer.from(signatureB64, "base64")
+    return nacl.sign.detached.verify(message, sig, pubKey)
+  } catch {
+    return false
+  }
+}
+
+// ── AgentWorld HTTP header signing ──────────────────────────────────────────
 
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000
 

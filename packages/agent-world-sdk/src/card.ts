@@ -1,5 +1,5 @@
 /**
- * AgentWorld v0.2 Agent Card builder.
+ * AgentWorld Agent Card builder.
  *
  * Builds and JWS-signs a standard A2A-compatible Agent Card with an
  * `extensions.agentworld` block. The card is served at /.well-known/agent.json.
@@ -40,16 +40,16 @@ export interface AgentCardOpts {
   cardUrl: string;
   /** A2A JSON-RPC endpoint URL (optional) */
   rpcUrl?: string;
-  /** AgentWorld profiles to declare. Defaults to ["core/v0.2"] */
+  /** AgentWorld profiles to declare. Defaults to ["core"] */
   profiles?: string[];
   /** Conformance node class. Defaults to "CoreNode" */
   nodeClass?: string;
-  /** Capabilities advertised in conformance block. Defaults to standard core/v0.2 set. */
+  /** Capabilities advertised in conformance block. */
   capabilities?: string[];
 }
 
 /**
- * Build and JWS-sign an AgentWorld v0.2 Agent Card.
+ * Build and JWS-sign an AgentWorld Agent Card.
  *
  * Returns the canonical JSON string that MUST be served verbatim as
  * `application/json`. The JWS signature covers
@@ -61,7 +61,7 @@ export async function buildSignedAgentCard(
   opts: AgentCardOpts,
   identity: Identity
 ): Promise<string> {
-  const profiles = opts.profiles ?? ["core/v0.2"];
+  const profiles = opts.profiles ?? ["core"];
   const nodeClass = opts.nodeClass ?? "CoreNode";
   const did = deriveDidKey(identity.pubB64);
   const publicKeyMultibase = toPublicKeyMultibase(identity.pubB64);
@@ -97,7 +97,7 @@ export async function buildSignedAgentCard(
           nodeClass,
           profiles: profiles.map((id) => ({
             id,
-            required: id === "core/v0.2",
+            required: id === "core",
           })),
           capabilities: opts.capabilities ?? [
             "signed-card-jws",
