@@ -147,7 +147,16 @@ export async function startDiscovery(opts: DiscoveryOpts): Promise<() => void> {
     onDiscovery?.(opts.peerDb.size);
   }
 
-  setTimeout(runDiscovery, 3_000);
+  let startupTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+    startupTimer = undefined;
+    void runDiscovery();
+  }, 3_000);
   const timer = setInterval(runDiscovery, intervalMs);
-  return () => clearInterval(timer);
+  return () => {
+    if (startupTimer) {
+      clearTimeout(startupTimer);
+      startupTimer = undefined;
+    }
+    clearInterval(timer);
+  };
 }

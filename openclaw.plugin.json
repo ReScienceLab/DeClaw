@@ -27,26 +27,17 @@
         "default": 8098,
         "description": "Local port for the QUIC/UDP transport (optional fast transport)"
       },
+      "advertise_address": {
+        "type": "string",
+        "description": "Public IP or DNS name to advertise for the QUIC/UDP transport when the listener is bound to a different local interface"
+      },
+      "advertise_port": {
+        "type": "integer",
+        "description": "Public UDP port to advertise for the QUIC/UDP transport when it differs from the local listener port"
+      },
       "data_dir": {
         "type": "string",
         "description": "Directory to store identity and peer data (default: ~/.openclaw/dap)"
-      },
-      "bootstrap_peers": {
-        "type": "array",
-        "items": {
-          "type": "string"
-        },
-        "description": "Additional bootstrap node addresses (hostname or IP) for DHT peer discovery"
-      },
-      "discovery_interval_ms": {
-        "type": "integer",
-        "default": 300000,
-        "description": "How often to gossip with known peers (ms, default 5 min)"
-      },
-      "startup_delay_ms": {
-        "type": "integer",
-        "default": 5000,
-        "description": "Delay before first bootstrap attempt (ms, default 5s)"
       },
       "tofu_ttl_days": {
         "type": "integer",
@@ -68,17 +59,16 @@
       "label": "QUIC Transport Port (UDP)",
       "placeholder": "8098"
     },
+    "advertise_address": {
+      "label": "Advertised QUIC Address",
+      "placeholder": "vpn.example.com"
+    },
+    "advertise_port": {
+      "label": "Advertised QUIC Port",
+      "placeholder": "4433"
+    },
     "data_dir": {
       "label": "Data Directory"
-    },
-    "bootstrap_peers": {
-      "label": "Bootstrap Peers"
-    },
-    "discovery_interval_ms": {
-      "label": "Discovery Interval (ms)"
-    },
-    "startup_delay_ms": {
-      "label": "Bootstrap Startup Delay (ms)"
     },
     "tofu_ttl_days": {
       "label": "TOFU Key Binding TTL (days)"
