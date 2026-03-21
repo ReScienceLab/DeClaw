@@ -178,6 +178,12 @@ export interface AgentSummary {
   online: boolean
 }
 
+export interface WorldMember {
+  agentId: string
+  alias: string
+  endpoints: Endpoint[]
+}
+
 export interface LedgerQueryOpts {
   agentId?: string
   event?: LedgerEvent | LedgerEvent[]

@@ -49,5 +49,6 @@ export type {
   LedgerEntry,
   LedgerEvent,
   AgentSummary,
+  WorldMember,
   LedgerQueryOpts,
 } from "./types.js";

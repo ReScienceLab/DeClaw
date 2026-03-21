@@ -8,10 +8,9 @@ import * as os from "os"
 import * as path from "path"
 import { execSync } from "child_process"
 import { loadOrCreateIdentity, deriveDidKey } from "./identity"
-import { initDb, listPeers, upsertPeer, removePeer, getPeer, flushDb, getPeerIds, getEndpointAddress, setTofuTtl, findPeersByCapability } from "./peer-db"
+import { initDb, listPeers, getPeer, flushDb, getPeerIds, getEndpointAddress, setTofuTtl, findPeersByCapability } from "./peer-db"
 import { startPeerServer, stopPeerServer, getInbox, setSelfMeta, handleUdpMessage } from "./peer-server"
 import { sendP2PMessage, pingPeer, broadcastLeave, SendOptions } from "./peer-client"
-import { bootstrapDiscovery, startDiscoveryLoop, stopDiscoveryLoop, DEFAULT_BOOTSTRAP_PEERS } from "./peer-discovery"
 import { upsertDiscoveredPeer } from "./peer-db"
 import { buildChannel, wireInboundToGateway, CHANNEL_CONFIG_SCHEMA } from "./channel"
 import { Identity, PluginConfig, Endpoint } from "./types"
@@ -19,7 +18,7 @@ import { TransportManager } from "./transport"
 import { UDPTransport } from "./transport-quic"
 
 const DAP_TOOLS = [
-  "p2p_add_peer", "p2p_discover", "p2p_list_peers",
+  "p2p_list_peers",
   "p2p_send_message", "p2p_status",
   "list_worlds", "join_world",
 ]
@@ -66,8 +65,6 @@ function ensureChannelConfig(config: any): void {
 let identity: Identity | null = null
 let dataDir: string = path.join(os.homedir(), ".openclaw", "dap")
 let peerPort: number = 8099
-let _startupTimer: ReturnType<typeof setTimeout> | null = null
-let _bootstrapPeers: string[] = []
 let _agentMeta: { name?: string; version?: string; endpoints?: Endpoint[] } = {}
 let _transportManager: TransportManager | null = null
 let _quicTransport: UDPTransport | null = null
@@ -92,8 +89,6 @@ export default function register(api: any) {
       const cfg: PluginConfig = api.config?.plugins?.entries?.["dap"]?.config ?? {}
       dataDir = cfg.data_dir ?? dataDir
       peerPort = cfg.peer_port ?? peerPort
-      _bootstrapPeers = cfg.bootstrap_peers ?? []
-      const discoveryIntervalMs: number = cfg.discovery_interval_ms ?? 10 * 60 * 1000
       const pluginVersion: string = require("../package.json").version
       _agentMeta = { name: cfg.agent_name ?? api.config?.identity?.name, version: pluginVersion }
 
@@ -148,9 +143,8 @@ export default function register(api: any) {
             : "Running in HTTP-only mode.",
           "",
           "Quick start:",
-          "  openclaw p2p status    — show your agent ID",
-          "  openclaw p2p discover  — find peers on the network",
-          "  openclaw p2p send <id> <msg>  — send a message",
+          "  openclaw p2p status     — show your agent ID",
+          "  openclaw join_world <id> — join a world to discover peers",
         ]
         setTimeout(() => {
           try {
@@ -164,22 +158,10 @@ export default function register(api: any) {
         }, 2000)
       }
 
-      const startupDelayMs = cfg.startup_delay_ms ?? 5_000
-      console.log(`[p2p] Discovery starts in ${startupDelayMs / 1000}s`)
-      _startupTimer = setTimeout(async () => {
-        _startupTimer = null
-        console.log(`[p2p:discovery] Starting bootstrap — agentId: ${identity?.agentId}`)
-        await bootstrapDiscovery(identity!, peerPort, _bootstrapPeers, _agentMeta)
-        startDiscoveryLoop(identity!, peerPort, discoveryIntervalMs, _bootstrapPeers, _agentMeta)
-      }, startupDelayMs)
+      console.log(`[p2p] Ready — join a world to discover peers`)
     },
 
     stop: async () => {
-      if (_startupTimer) {
-        clearTimeout(_startupTimer)
-        _startupTimer = null
-      }
-      stopDiscoveryLoop()
       if (identity) {
         await broadcastLeave(identity, listPeers(), peerPort, buildSendOpts())
       }
@@ -279,23 +261,6 @@ export default function register(api: any) {
         })
 
       p2p
-        .command("add <agentId>")
-        .description("Add a peer by agent ID")
-        .option("-a, --alias <alias>", "Human-readable alias for this peer")
-        .action((agentId: string, opts: { alias?: string }) => {
-          upsertPeer(agentId, opts.alias ?? "")
-          console.log(`Peer added: ${agentId}${opts.alias ? ` (${opts.alias})` : ""}`)
-        })
-
-      p2p
-        .command("remove <agentId>")
-        .description("Remove a peer")
-        .action((agentId: string) => {
-          removePeer(agentId)
-          console.log(`Peer removed: ${agentId}`)
-        })
-
-      p2p
         .command("ping <agentId>")
         .description("Check if a peer is reachable")
         .action(async (agentId: string) => {
@@ -319,21 +284,6 @@ export default function register(api: any) {
           } else {
             console.error(`Failed: ${result.error}`)
           }
-        })
-
-      p2p
-        .command("discover")
-        .description("Trigger an immediate DHT peer discovery round")
-        .action(async () => {
-          if (!identity) {
-            console.error("Plugin not started. Restart the gateway first.")
-            return
-          }
-          const cfg: PluginConfig = api.config?.plugins?.entries?.["dap"]?.config ?? {}
-          const bootstrapPeers: string[] = cfg.bootstrap_peers ?? []
-          console.log(`Discovering peers...`)
-          const found = await bootstrapDiscovery(identity, peerPort, bootstrapPeers, _agentMeta)
-          console.log(`Discovery complete — ${found} new peer(s) found. Total: ${listPeers().length}`)
         })
 
       p2p
@@ -393,30 +343,6 @@ export default function register(api: any) {
   })
 
   // ── Agent tools ────────────────────────────────────────────────────────────
-  api.registerTool({
-    name: "p2p_add_peer",
-    description: "Add a remote OpenClaw agent as a P2P peer using their agent ID.",
-    parameters: {
-      type: "object",
-      properties: {
-        agent_id: {
-          type: "string",
-          description: "The peer's agent ID (16-char hex string)",
-        },
-        alias: {
-          type: "string",
-          description: "Optional human-readable name for this peer",
-        },
-      },
-      required: ["agent_id"],
-    },
-    async execute(_id: string, params: { agent_id: string; alias?: string }) {
-      upsertPeer(params.agent_id, params.alias ?? "")
-      const label = params.alias ? ` (${params.alias})` : ""
-      return { content: [{ type: "text", text: `Peer added: ${params.agent_id}${label}` }] }
-    },
-  })
-
   api.registerTool({
     name: "p2p_send_message",
     description: "Send a direct encrypted P2P message to a peer by their agent ID.",
@@ -497,29 +423,13 @@ export default function register(api: any) {
   })
 
   api.registerTool({
-    name: "p2p_discover",
-    description: "Trigger an immediate DHT peer discovery round.",
-    parameters: { type: "object", properties: {}, required: [] },
-    async execute(_id: string, _params: Record<string, never>) {
-      if (!identity) {
-        return { content: [{ type: "text", text: "P2P service not started." }] }
-      }
-      const cfg: PluginConfig = api.config?.plugins?.entries?.["dap"]?.config ?? {}
-      const bootstrapPeers: string[] = cfg.bootstrap_peers ?? []
-      const found = await bootstrapDiscovery(identity, peerPort, bootstrapPeers, _agentMeta)
-      const total = listPeers().length
-      return { content: [{ type: "text", text: `Discovery complete — ${found} new peer(s) found. Known peers: ${total}` }] }
-    },
-  })
-
-  api.registerTool({
     name: "list_worlds",
-    description: "List all Agent worlds currently active on the DAP network.",
+    description: "List known Agent worlds. Worlds are discovered by joining them via URL or agent ID.",
     parameters: { type: "object", properties: {}, required: [] },
     async execute(_id: string, _params: Record<string, never>) {
       const worlds = findPeersByCapability("world:")
       if (!worlds.length) {
-        return { content: [{ type: "text", text: "No worlds found on the DAP network yet. Try running p2p_discover first." }] }
+        return { content: [{ type: "text", text: "No worlds known yet. Use join_world with a world address to join one." }] }
       }
       const lines = worlds.map((p) => {
         const cap = p.capabilities?.find((c) => c.startsWith("world:")) ?? ""
@@ -534,33 +444,80 @@ export default function register(api: any) {
 
   api.registerTool({
     name: "join_world",
-    description: "Join an Agent world on the DAP network. Sends a world.join message to the World Agent.",
+    description: "Join an Agent world. Provide a world_id (if already known) or address (host:port) to connect directly.",
     parameters: {
       type: "object",
       properties: {
-        world_id: { type: "string", description: "The world ID to join (e.g. 'pixel-city')" },
+        world_id: { type: "string", description: "The world ID (e.g. 'pixel-city') — looks up from known worlds" },
+        address: { type: "string", description: "Direct address of the world server (e.g. 'example.com:8099' or '1.2.3.4:8099')" },
         alias: { type: "string", description: "Optional display name inside the world" },
       },
-      required: ["world_id"],
+      required: [],
     },
-    async execute(_id: string, params: { world_id: string; alias?: string }) {
+    async execute(_id: string, params: { world_id?: string; address?: string; alias?: string }) {
       if (!identity) {
         return { content: [{ type: "text", text: "P2P service not started." }] }
       }
-      const worlds = findPeersByCapability(`world:${params.world_id}`)
-      if (!worlds.length) {
-        return { content: [{ type: "text", text: `World '${params.world_id}' not found. Run list_worlds to see available worlds.` }] }
+      if (!params.world_id && !params.address) {
+        return { content: [{ type: "text", text: "Provide either world_id or address." }], isError: true }
       }
-      const world = worlds[0]
-      if (!world.endpoints?.length) {
-        return { content: [{ type: "text", text: `World '${params.world_id}' has no reachable endpoints.` }] }
+
+      let targetAddr: string
+      let targetPort: number = peerPort
+      let worldAgentId: string | undefined
+
+      if (params.address) {
+        const parts = params.address.split(":")
+        targetPort = parts.length > 1 ? parseInt(parts[parts.length - 1]) || peerPort : peerPort
+        targetAddr = parts.length > 1 ? parts.slice(0, -1).join(":") : parts[0]
+
+        // Ping the world to get its agentId
+        const ok = await pingPeer(targetAddr, targetPort, 5_000)
+        if (!ok) {
+          return { content: [{ type: "text", text: `World at ${params.address} is unreachable.` }], isError: true }
+        }
+        worldAgentId = targetAddr
+      } else {
+        const worlds = findPeersByCapability(`world:${params.world_id}`)
+        if (!worlds.length) {
+          return { content: [{ type: "text", text: `World '${params.world_id}' not found. Use address parameter to connect directly.` }] }
+        }
+        const world = worlds[0]
+        if (!world.endpoints?.length) {
+          return { content: [{ type: "text", text: `World '${params.world_id}' has no reachable endpoints.` }] }
+        }
+        targetAddr = world.endpoints[0].address
+        targetPort = world.endpoints[0].port ?? peerPort
+        worldAgentId = world.agentId
       }
-      const content = JSON.stringify({ alias: params.alias ?? _agentMeta.name ?? identity.agentId.slice(0, 8) })
-      const result = await sendP2PMessage(identity, world.agentId, "world.join", content, world.endpoints[0].port ?? peerPort, 10_000, buildSendOpts(world.agentId))
-      if (result.ok) {
-        return { content: [{ type: "text", text: `Joined world '${params.world_id}' (agent: ${world.agentId.slice(0, 12)}...)` }] }
+
+      const myEndpoints: Endpoint[] = _agentMeta.endpoints ?? []
+      const joinPayload = JSON.stringify({
+        alias: params.alias ?? _agentMeta.name ?? identity.agentId.slice(0, 8),
+        endpoints: myEndpoints,
+      })
+
+      const result = await sendP2PMessage(identity, worldAgentId!, "world.join", joinPayload, targetPort, 10_000, buildSendOpts(worldAgentId))
+      if (!result.ok) {
+        return { content: [{ type: "text", text: `Failed to join world: ${result.error}` }], isError: true }
       }
-      return { content: [{ type: "text", text: `Failed to join world: ${result.error}` }], isError: true }
+
+      // Populate peer DB from members list in join response
+      if (result.data?.members && Array.isArray(result.data.members)) {
+        for (const member of result.data.members as Array<{ agentId: string; alias?: string; endpoints?: Endpoint[] }>) {
+          if (member.agentId === identity.agentId) continue
+          upsertDiscoveredPeer(member.agentId, "", {
+            alias: member.alias,
+            endpoints: member.endpoints,
+            source: "gossip",
+          })
+        }
+      }
+
+      const worldId = result.data?.worldId ?? params.world_id ?? params.address
+      const members = result.data?.members as unknown[] | undefined
+      const memberCount = members?.length ?? 0
+      return { content: [{ type: "text", text: `Joined world '${worldId}' — ${memberCount} other member(s) discovered` }] }
     },
   })
 }

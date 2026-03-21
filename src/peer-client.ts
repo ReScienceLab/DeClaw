@@ -31,7 +31,7 @@ async function sendViaHttp(
   port: number,
   timeoutMs: number,
   urlPath: string = "/peer/message",
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; data?: Record<string, unknown> }> {
   const isIpv6 = targetAddr.includes(":") && !targetAddr.includes(".")
   const host = isIpv6 ? `[${targetAddr}]:${port}` : `${targetAddr}:${port}`
   const url = `http://${host}${urlPath}`
@@ -51,7 +51,12 @@ async function sendViaHttp(
       const text = await resp.text().catch(() => "")
       return { ok: false, error: `HTTP ${resp.status}: ${text}` }
     }
-    return { ok: true }
+    try {
+      const data = await resp.json() as Record<string, unknown>
+      return { ok: true, data }
+    } catch {
+      return { ok: true }
+    }
   } catch (err: any) {
     return { ok: false, error: err.message ?? String(err) }
   }
@@ -88,7 +93,7 @@ export async function sendP2PMessage(
   port: number = 8099,
   timeoutMs: number = 10_000,
   opts?: SendOptions,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; data?: Record<string, unknown> }> {
   const msg = buildSignedMessage(identity, event, content)
 
   if (opts?.quicTransport?.isActive() && opts?.endpoints?.length) {

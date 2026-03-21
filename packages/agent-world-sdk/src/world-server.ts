@@ -16,6 +16,8 @@ import type {
   WorldHooks,
   WorldServer,
   WorldManifest,
+  WorldMember,
+  Endpoint,
   LedgerQueryOpts,
 } from "./types.js";
 
@@ -93,6 +95,18 @@ export async function createWorldServer(
 
   // Track agents currently in world for idle eviction
   const agentLastSeen = new Map<string, number>();
+  // Track agent endpoints for world-scoped member discovery
+  const agentEndpoints = new Map<string, { alias: string; endpoints: Endpoint[] }>();
+
+  function getMembers(exclude?: string): WorldMember[] {
+    const members: WorldMember[] = [];
+    for (const [id, info] of agentEndpoints) {
+      if (id === exclude) continue;
+      if (!agentLastSeen.has(id)) continue;
+      members.push({ agentId: id, alias: info.alias, endpoints: info.endpoints });
+    }
+    return members;
+  }
 
   // Append-only event ledger — blockchain-inspired agent activity log
   const ledger = new WorldLedger(dataDir, worldId, identity);
@@ -134,13 +148,17 @@ export async function createWorldServer(
             return;
           }
           agentLastSeen.set(agentId, Date.now());
+          const alias = (data["alias"] ?? data["name"] ?? "") as string;
+          const joinEndpoints = (data["endpoints"] ?? []) as Endpoint[];
+          agentEndpoints.set(agentId, { alias, endpoints: joinEndpoints });
           const result = await hooks.onJoin(agentId, data);
-          ledger.append("world.join", agentId, (data["alias"] ?? data["name"]) as string | undefined);
+          ledger.append("world.join", agentId, alias || undefined);
           sendReply({
             ok: true,
             worldId,
             manifest: buildManifest(result.manifest),
             state: result.state,
+            members: getMembers(agentId),
           });
           console.log(
             `[world] ${agentId.slice(0, 8)} joined — ${
@@ -153,6 +171,7 @@ export async function createWorldServer(
         case "world.leave": {
           const wasPresent = agentLastSeen.has(agentId);
           agentLastSeen.delete(agentId);
+          agentEndpoints.delete(agentId);
           if (wasPresent) {
             await hooks.onLeave(agentId);
             ledger.append("world.leave", agentId);
@@ -208,6 +227,14 @@ export async function createWorldServer(
       worldId,
       agents: ledger.getAgentSummaries(new Set(agentLastSeen.keys())),
     };
+  });
+
+  fastify.get("/world/members", async (req, reply) => {
+    const from = req.headers["x-agentworld-from"] as string | undefined;
+    if (!from || !agentLastSeen.has(from)) {
+      return reply.code(403).send({ error: "Not a member of this world" });
+    }
+    return { ok: true, worldId, members: getMembers() };
   });
 
   // Allow caller to register additional routes before listen
@@ -284,6 +311,7 @@ export async function createWorldServer(
     for (const [id, ts] of agentLastSeen) {
       if (ts < cutoff) {
         agentLastSeen.delete(id);
+        agentEndpoints.delete(id);
         await hooks.onLeave(id).catch(() => {});
         ledger.append("world.evict", id, undefined, { reason: "idle" });
         console.log(`[world] ${id.slice(0, 8)} evicted (idle)`);

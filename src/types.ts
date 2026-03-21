@@ -73,9 +73,6 @@ export interface PluginConfig {
   peer_port?: number
   quic_port?: number
   data_dir?: string
-  bootstrap_peers?: string[]
-  discovery_interval_ms?: number
-  startup_delay_ms?: number
   tofu_ttl_days?: number
 }
 
