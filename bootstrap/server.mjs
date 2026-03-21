@@ -72,6 +72,25 @@ function isRegistryOrWorld(capabilities) {
   );
 }
 
+function normalizeSharedWorldRecord(record) {
+  if (!record || typeof record !== "object") return null;
+  if (typeof record.publicKey !== "string" || record.publicKey.length === 0) return null;
+  if (!hasWorldCapability(record.capabilities)) return null;
+
+  const derivedId = agentIdFromPublicKey(record.publicKey);
+  if (record.agentId && record.agentId !== derivedId) return null;
+
+  return {
+    agentId: derivedId,
+    publicKey: record.publicKey,
+    alias: typeof record.alias === "string" ? record.alias : undefined,
+    version: typeof record.version === "string" ? record.version : undefined,
+    endpoints: Array.isArray(record.endpoints) ? record.endpoints : [],
+    capabilities: record.capabilities,
+    lastSeen: typeof record.lastSeen === "number" ? record.lastSeen : undefined,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // World DB (in-memory + JSON persistence)
 // ---------------------------------------------------------------------------
@@ -140,6 +159,7 @@ function pruneStaleWorlds(maxAgeMs) {
 
 function getWorldsForExchange(limit = 50) {
   return [...worlds.values()]
+    .filter((record) => hasWorldCapability(record.capabilities))
     .sort((a, b) => b.lastSeen - a.lastSeen)
     .slice(0, limit)
     .map(({ agentId, publicKey, alias, version, endpoints, capabilities, lastSeen }) => ({
@@ -220,11 +240,14 @@ server.post("/peer/announce", async (req, reply) => {
   }
 
   const { signature, ...signable } = ann;
-  // Try domain-separated ANNOUNCE verification (SDK sends these), then raw fallback
+  // Verify against registry-supported protocol separators; ann.version is payload metadata only.
   let sigValid = false;
-  const version = (ann.version ?? "0.5").split(".").slice(0, 2).join(".");
-  const announceSep = `${ANNOUNCE_SEPARATOR_PREFIX}${version}\0`;
-  sigValid = verifyDomainSeparatedSignature(announceSep, ann.publicKey, signable, signature);
+  for (const announceSep of ["AgentWorld-Announce-0.5\0"]) {
+    if (verifyDomainSeparatedSignature(announceSep, ann.publicKey, signable, signature)) {
+      sigValid = true;
+      break;
+    }
+  }
   if (!sigValid) sigValid = verifySignature(ann.publicKey, signable, signature);
   if (!sigValid) {
     return reply.code(403).send({ error: "Invalid Ed25519 signature" });
@@ -239,17 +262,22 @@ server.post("/peer/announce", async (req, reply) => {
     capabilities: ann.capabilities ?? [],
   });
 
-  // Accept world entries from the shared peers list too
-  for (const p of ann.peers ?? []) {
-    if (!p.publicKey || !p.agentId) continue;
-    if (p.agentId === derivedId) continue;
-    if (!hasWorldCapability(p.capabilities)) continue;
-    upsertWorld(p.agentId, p.publicKey, {
-      alias: p.alias,
-      endpoints: p.endpoints ?? [],
-      capabilities: p.capabilities ?? [],
-      lastSeen: p.lastSeen,
-    });
+  const canShareWorlds = Array.isArray(ann.capabilities) && ann.capabilities.includes("registry");
+
+  // Only sibling registries may share third-party world records, and each shared
+  // entry must still bind its advertised agentId to its public key.
+  if (canShareWorlds) {
+    for (const p of ann.peers ?? []) {
+      const sharedWorld = normalizeSharedWorldRecord(p);
+      if (!sharedWorld || sharedWorld.agentId === derivedId) continue;
+      upsertWorld(sharedWorld.agentId, sharedWorld.publicKey, {
+        alias: sharedWorld.alias,
+        version: sharedWorld.version,
+        endpoints: sharedWorld.endpoints,
+        capabilities: sharedWorld.capabilities,
+        lastSeen: sharedWorld.lastSeen,
+      });
+    }
   }
 
   const worldCap = ann.capabilities.find(c => c.startsWith("world:"));
@@ -321,14 +349,14 @@ async function syncWithSiblings() {
       if (res.ok) {
         const body = await res.json();
         for (const p of body.peers ?? []) {
-          if (!p.agentId || p.agentId === selfAgentId) continue;
-          if (!hasWorldCapability(p.capabilities)) continue;
-          upsertWorld(p.agentId, p.publicKey, {
-            alias: p.alias,
-            version: p.version,
-            endpoints: p.endpoints ?? [],
-            capabilities: p.capabilities ?? [],
-            lastSeen: p.lastSeen,
+          const sharedWorld = normalizeSharedWorldRecord(p);
+          if (!sharedWorld || sharedWorld.agentId === selfAgentId) continue;
+          upsertWorld(sharedWorld.agentId, sharedWorld.publicKey, {
+            alias: sharedWorld.alias,
+            version: sharedWorld.version,
+            endpoints: sharedWorld.endpoints,
+            capabilities: sharedWorld.capabilities,
+            lastSeen: sharedWorld.lastSeen,
           });
         }
         ok++;

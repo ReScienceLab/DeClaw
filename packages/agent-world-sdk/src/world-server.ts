@@ -7,6 +7,7 @@ import {
   canonicalize,
   signPayload,
   signHttpRequest,
+  verifyHttpRequestHeaders,
   DOMAIN_SEPARATORS,
   signWithDomainSeparator,
 } from "./crypto.js";
@@ -231,6 +232,22 @@ export async function createWorldServer(
 
   fastify.get("/world/members", async (req, reply) => {
     const from = req.headers["x-agentworld-from"] as string | undefined;
+    const peer = from ? peerDb.get(from) : undefined;
+    if (!peer?.publicKey) {
+      return reply.code(403).send({ error: "Unknown member public key" });
+    }
+    const authority = (req.headers["host"] as string) ?? "localhost";
+    const result = verifyHttpRequestHeaders(
+      req.headers as Record<string, string | string[] | undefined>,
+      req.method,
+      req.url,
+      authority,
+      "",
+      peer.publicKey
+    );
+    if (!result.ok) {
+      return reply.code(403).send({ error: result.error });
+    }
     if (!from || !agentLastSeen.has(from)) {
       return reply.code(403).send({ error: "Not a member of this world" });
     }

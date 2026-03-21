@@ -81,6 +81,42 @@ export interface SendOptions {
   quicTransport?: Transport
 }
 
+export async function getPeerPingInfo(
+  targetAddr: string,
+  port: number = 8099,
+  timeoutMs: number = 5_000,
+  endpoints?: Endpoint[],
+): Promise<{ ok: boolean; data?: Record<string, unknown> }> {
+  if (endpoints?.length) {
+    const ep = endpoints.sort((a, b) => a.priority - b.priority)[0]
+    if (ep) {
+      targetAddr = ep.address
+      port = ep.port || port
+    }
+  }
+
+  const isIpv6 = targetAddr.includes(":") && !targetAddr.includes(".")
+  const url = isIpv6
+    ? `http://[${targetAddr}]:${port}/peer/ping`
+    : `http://${targetAddr}:${port}/peer/ping`
+
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+    const resp = await fetch(url, { signal: ctrl.signal })
+    clearTimeout(timer)
+    if (!resp.ok) return { ok: false }
+    try {
+      const data = await resp.json() as Record<string, unknown>
+      return { ok: true, data }
+    } catch {
+      return { ok: true }
+    }
+  } catch {
+    return { ok: false }
+  }
+}
+
 /**
  * Send a signed message to a peer. Tries QUIC first if available,
  * then falls back to HTTP.
@@ -148,24 +184,6 @@ export async function pingPeer(
   timeoutMs: number = 5_000,
   endpoints?: Endpoint[],
 ): Promise<boolean> {
-  if (endpoints?.length) {
-    const ep = endpoints.sort((a, b) => a.priority - b.priority)[0]
-    if (ep) {
-      targetAddr = ep.address
-      port = ep.port || port
-    }
-  }
-  const isIpv6 = targetAddr.includes(":") && !targetAddr.includes(".")
-  const url = isIpv6
-    ? `http://[${targetAddr}]:${port}/peer/ping`
-    : `http://${targetAddr}:${port}/peer/ping`
-  try {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs)
-    const resp = await fetch(url, { signal: ctrl.signal })
-    clearTimeout(timer)
-    return resp.ok
-  } catch {
-    return false
-  }
+  const result = await getPeerPingInfo(targetAddr, port, timeoutMs, endpoints)
+  return result.ok
 }

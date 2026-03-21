@@ -8,14 +8,15 @@ import * as os from "os"
 import * as path from "path"
 import { execSync } from "child_process"
 import { loadOrCreateIdentity, deriveDidKey } from "./identity"
-import { initDb, listPeers, getPeer, flushDb, getPeerIds, getEndpointAddress, setTofuTtl, findPeersByCapability } from "./peer-db"
+import { initDb, listPeers, getPeer, flushDb, getPeerIds, getEndpointAddress, setTofuTtl, findPeersByCapability, removePeer } from "./peer-db"
 import { startPeerServer, stopPeerServer, setSelfMeta, handleUdpMessage, addWorldMembers, removeWorld, clearWorldMembers } from "./peer-server"
-import { sendP2PMessage, pingPeer, broadcastLeave, SendOptions } from "./peer-client"
+import { sendP2PMessage, pingPeer, broadcastLeave, SendOptions, getPeerPingInfo } from "./peer-client"
 import { upsertDiscoveredPeer } from "./peer-db"
 import { buildChannel, wireInboundToGateway, CHANNEL_CONFIG_SCHEMA } from "./channel"
 import { Identity, PluginConfig, Endpoint } from "./types"
 import { TransportManager } from "./transport"
 import { UDPTransport } from "./transport-quic"
+import { parseDirectPeerAddress } from "./address"
 
 const DAP_TOOLS = [
   "p2p_list_peers",
@@ -71,8 +72,103 @@ let _quicTransport: UDPTransport | null = null
 
 // Track joined worlds for periodic member refresh
 const _joinedWorlds = new Map<string, { agentId: string; address: string; port: number }>()
+const _worldMembersByWorld = new Map<string, Set<string>>()
+const _worldScopedPeerWorlds = new Map<string, Set<string>>()
+const _worldRefreshFailures = new Map<string, number>()
 let _memberRefreshTimer: ReturnType<typeof setInterval> | null = null
+let _welcomeTimer: ReturnType<typeof setTimeout> | null = null
 const MEMBER_REFRESH_INTERVAL_MS = 30_000
+const WORLD_MEMBER_REFRESH_FAILURE_LIMIT = 3
+
+function trackWorldScopedPeer(agentId: string, worldId: string): void {
+  let worldIds = _worldScopedPeerWorlds.get(agentId)
+  if (!worldIds) {
+    worldIds = new Set<string>()
+    _worldScopedPeerWorlds.set(agentId, worldIds)
+  }
+  worldIds.add(worldId)
+}
+
+function untrackWorldScopedPeer(agentId: string, worldId: string): void {
+  const worldIds = _worldScopedPeerWorlds.get(agentId)
+  if (!worldIds) return
+
+  worldIds.delete(worldId)
+  if (worldIds.size > 0) return
+
+  _worldScopedPeerWorlds.delete(agentId)
+  if (getPeer(agentId)?.source !== "manual") {
+    removePeer(agentId)
+  }
+}
+
+function syncWorldMembers(
+  worldId: string,
+  members: Array<{ agentId: string; alias?: string; endpoints?: Endpoint[] }>
+): void {
+  const nextMemberIds = new Set<string>()
+  const previousMemberIds = _worldMembersByWorld.get(worldId) ?? new Set<string>()
+
+  for (const member of members) {
+    if (!member.agentId || member.agentId === identity?.agentId) continue
+
+    nextMemberIds.add(member.agentId)
+
+    const existingPeer = getPeer(member.agentId)
+    if (!existingPeer || existingPeer.source !== "manual") {
+      upsertDiscoveredPeer(member.agentId, "", {
+        alias: member.alias,
+        endpoints: member.endpoints,
+        source: "gossip",
+      })
+    }
+
+    trackWorldScopedPeer(member.agentId, worldId)
+  }
+
+  for (const agentId of previousMemberIds) {
+    if (!nextMemberIds.has(agentId)) {
+      untrackWorldScopedPeer(agentId, worldId)
+    }
+  }
+
+  _worldMembersByWorld.set(worldId, nextMemberIds)
+}
+
+function removeWorldMembers(worldId: string): void {
+  const memberIds = _worldMembersByWorld.get(worldId)
+  if (!memberIds) return
+
+  for (const agentId of memberIds) {
+    untrackWorldScopedPeer(agentId, worldId)
+  }
+
+  _worldMembersByWorld.delete(worldId)
+}
+
+function stopWorldMemberRefreshIfIdle(): void {
+  if (_joinedWorlds.size > 0 || !_memberRefreshTimer) return
+
+  clearInterval(_memberRefreshTimer)
+  _memberRefreshTimer = null
+}
+
+function dropJoinedWorld(worldId: string): void {
+  removeWorldMembers(worldId)
+  _joinedWorlds.delete(worldId)
+  _worldRefreshFailures.delete(worldId)
+  stopWorldMemberRefreshIfIdle()
+}
+
+function recordWorldRefreshFailure(worldId: string): void {
+  const failures = (_worldRefreshFailures.get(worldId) ?? 0) + 1
+  if (failures >= WORLD_MEMBER_REFRESH_FAILURE_LIMIT) {
+    dropJoinedWorld(worldId)
+    return
+  }
+
+  _worldRefreshFailures.set(worldId, failures)
+}
 
 async function refreshWorldMembers(): Promise<void> {
   if (!identity) return
@@ -87,21 +183,42 @@ async function refreshWorldMembers(): Promise<void> {
         headers: { ...awHeaders },
         signal: AbortSignal.timeout(10_000),
       })
-      if (!resp.ok) continue
-      const body = await resp.json() as { members?: Array<{ agentId: string; alias?: string; endpoints?: Endpoint[] }> }
-      const memberIds: string[] = []
-      for (const member of body.members ?? []) {
-        if (member.agentId === identity!.agentId) continue
-        memberIds.push(member.agentId)
-        upsertDiscoveredPeer(member.agentId, "", {
-          alias: member.alias,
-          endpoints: member.endpoints,
-          source: "gossip",
-        })
+      if (resp.status === 403 || resp.status === 404) {
+        dropJoinedWorld(worldId)
+        removeWorld(worldId)
+        continue
       }
-      addWorldMembers(worldId, memberIds)
-    } catch { /* world unreachable — skip */ }
+      if (!resp.ok) {
+        recordWorldRefreshFailure(worldId)
+        continue
+      }
+      const body = await resp.json() as { members?: Array<{ agentId: string; alias?: string; endpoints?: Endpoint[] }> }
+      const memberList = body.members ?? []
+      syncWorldMembers(worldId, memberList)
+      addWorldMembers(worldId, memberList.map(m => m.agentId).filter(id => id !== identity!.agentId))
+      _worldRefreshFailures.delete(worldId)
+    } catch {
+      recordWorldRefreshFailure(worldId)
+    }
   }
+}
+
+async function leaveJoinedWorlds(): Promise<void> {
+  if (!identity || _joinedWorlds.size === 0) return
+
+  await Promise.allSettled(
+    [..._joinedWorlds.values()].map((info) =>
+      sendP2PMessage(
+        identity!,
+        info.address,
+        "world.leave",
+        "",
+        info.port,
+        3_000,
+        buildSendOpts(info.agentId)
+      )
+    )
+  )
 }
 
 function buildSendOpts(peerIdOrAddr?: string): SendOptions {
@@ -181,7 +298,8 @@ export default function register(api: any) {
           "  openclaw p2p status     — show your agent ID",
           "  openclaw join_world <id> — join a world to discover peers",
         ]
-        setTimeout(() => {
+        _welcomeTimer = setTimeout(() => {
+          _welcomeTimer = null
           try {
             api.gateway?.receiveChannelMessage?.({
               channelId: "dap",
@@ -201,8 +319,17 @@ export default function register(api: any) {
         clearInterval(_memberRefreshTimer)
         _memberRefreshTimer = null
       }
+      if (_welcomeTimer) {
+        clearTimeout(_welcomeTimer)
+        _welcomeTimer = null
+      }
+      await leaveJoinedWorlds()
+      for (const worldId of _joinedWorlds.keys()) {
+        removeWorldMembers(worldId)
+      }
       _joinedWorlds.clear()
       clearWorldMembers()
+      _worldRefreshFailures.clear()
       if (identity) {
         await broadcastLeave(identity, listPeers(), peerPort, buildSendOpts())
       }
@@ -548,16 +675,18 @@ export default function register(api: any) {
       let worldAgentId: string | undefined
 
       if (params.address) {
-        const parts = params.address.split(":")
-        targetPort = parts.length > 1 ? parseInt(parts[parts.length - 1]) || peerPort : peerPort
-        targetAddr = parts.length > 1 ? parts.slice(0, -1).join(":") : parts[0]
+        const parsedAddress = parseDirectPeerAddress(params.address, peerPort)
+        targetAddr = parsedAddress.address
+        targetPort = parsedAddress.port
 
-        // Ping the world to get its agentId
-        const ok = await pingPeer(targetAddr, targetPort, 5_000)
-        if (!ok) {
+        const ping = await getPeerPingInfo(targetAddr, targetPort, 5_000)
+        if (!ping.ok) {
           return { content: [{ type: "text", text: `World at ${params.address} is unreachable.` }], isError: true }
         }
-        worldAgentId = targetAddr
+        if (typeof ping.data?.agentId !== "string" || ping.data.agentId.length === 0) {
+          return { content: [{ type: "text", text: `World at ${params.address} did not provide a stable agent ID.` }], isError: true }
+        }
+        worldAgentId = ping.data.agentId
       } else {
         const worlds = findPeersByCapability(`world:${params.world_id}`)
         if (!worlds.length) {
@@ -578,31 +707,32 @@ export default function register(api: any) {
         endpoints: myEndpoints,
       })
 
-      const result = await sendP2PMessage(identity, worldAgentId!, "world.join", joinPayload, targetPort, 10_000, buildSendOpts(worldAgentId))
+      const result = await sendP2PMessage(identity, targetAddr, "world.join", joinPayload, targetPort, 10_000, buildSendOpts(worldAgentId))
       if (!result.ok) {
         return { content: [{ type: "text", text: `Failed to join world: ${result.error}` }], isError: true }
       }
 
-      // Populate peer DB + world membership allowlist from members list
       const worldId = (result.data?.worldId ?? params.world_id ?? params.address) as string
-      const memberIds: string[] = [worldAgentId!]
-      if (result.data?.members && Array.isArray(result.data.members)) {
-        for (const member of result.data.members as Array<{ agentId: string; alias?: string; endpoints?: Endpoint[] }>) {
-          if (member.agentId === identity.agentId) continue
-          memberIds.push(member.agentId)
-          upsertDiscoveredPeer(member.agentId, "", {
-            alias: member.alias,
-            endpoints: member.endpoints,
-            source: "gossip",
-          })
-        }
-      }
-      addWorldMembers(worldId, memberIds)
       const members = result.data?.members as unknown[] | undefined
       const memberCount = members?.length ?? 0
+      const worldName = typeof result.data?.manifest === "object" && result.data?.manifest && typeof (result.data.manifest as { name?: unknown }).name === "string"
+        ? (result.data.manifest as { name: string }).name
+        : worldId
+
+      upsertDiscoveredPeer(worldAgentId!, "", {
+        alias: worldName,
+        capabilities: [`world:${worldId}`],
+        endpoints: [{ transport: "tcp", address: targetAddr, port: targetPort, priority: 1, ttl: 3600 }],
+        source: "gossip",
+      })
+
+      const joinMembers = (result.data?.members as Array<{ agentId: string; alias?: string; endpoints?: Endpoint[] }> | undefined) ?? []
+      syncWorldMembers(worldId, joinMembers)
+      addWorldMembers(worldId, [worldAgentId!, ...joinMembers.map(m => m.agentId).filter(id => id !== identity!.agentId)])
 
       // Track this world for periodic member refresh
       _joinedWorlds.set(worldId, { agentId: worldAgentId!, address: targetAddr, port: targetPort })
+      _worldRefreshFailures.delete(worldId)
       if (!_memberRefreshTimer) {
         _memberRefreshTimer = setInterval(refreshWorldMembers, MEMBER_REFRESH_INTERVAL_MS)
       }
