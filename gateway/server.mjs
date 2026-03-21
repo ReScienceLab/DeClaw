@@ -148,6 +148,7 @@ function flushRegistry() {
 }
 
 function upsertAgent(agentId, publicKey, opts = {}) {
+  const persist = opts.persist === true
   const now = Date.now()
   const existing = registry.get(agentId)
   // For gossipped agents, preserve the original lastSeen from the sender
@@ -155,17 +156,24 @@ function upsertAgent(agentId, publicKey, opts = {}) {
   const lastSeen = opts.lastSeen
     ? Math.max(existing?.lastSeen ?? 0, opts.lastSeen)
     : now
-  registry.set(agentId, {
+  const nextRecord = {
     agentId,
     publicKey: publicKey || existing?.publicKey || "",
     alias: opts.alias ?? existing?.alias ?? "",
     endpoints: opts.endpoints ?? existing?.endpoints ?? [],
     capabilities: opts.capabilities ?? existing?.capabilities ?? [],
     lastSeen,
-  })
+  }
+  const changed = JSON.stringify(existing ?? null) !== JSON.stringify(nextRecord)
+  registry.set(agentId, nextRecord)
+  let trimmed = false
   if (registry.size > MAX_AGENTS) {
     const oldest = [...registry.values()].sort((a, b) => a.lastSeen - b.lastSeen)[0]
     registry.delete(oldest.agentId)
+    trimmed = true
+  }
+  if (persist && (changed || trimmed)) {
+    saveRegistry()
   }
 }
 
@@ -175,7 +183,10 @@ function pruneStaleAgents(ttl = STALE_TTL_MS) {
   for (const [id, p] of registry) {
     if (p.lastSeen < cutoff) { registry.delete(id); pruned++ }
   }
-  if (pruned > 0) console.log(`[gateway] Pruned ${pruned} stale agent(s) (TTL ${Math.round(ttl / 60000)}min)`)
+  if (pruned > 0) {
+    console.log(`[gateway] Pruned ${pruned} stale agent(s) (TTL ${Math.round(ttl / 60000)}min)`)
+    flushRegistry()
+  }
 }
 
 function getAgentsForExchange(limit = 50) {
@@ -304,7 +315,7 @@ async function startPeerListener() {
       return reply.code(400).send({ error: "agentId mismatch" });
     }
     upsertAgent(ann.from, ann.publicKey, {
-      alias: ann.alias, endpoints: ann.endpoints, capabilities: ann.capabilities,
+      alias: ann.alias, endpoints: ann.endpoints, capabilities: ann.capabilities, persist: true,
     });
     return { ok: true, peers: getAgentsForExchange(20) };
   });
