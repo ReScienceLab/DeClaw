@@ -2,6 +2,7 @@
 
 ## Codebase Patterns
 - For deterministic identity-helper regressions in this branch, use `nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 1))`; its public key is `iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w=` and it maps to stable literals for both `deriveDidKey()` and `toPublicKeyMultibase()`.
+- For Base58 zero-boundary fixes in this repo, both codec halves need explicit all-zero handling: the encoder must not append the synthetic zero digit after leading `1`s, and the decoder must not retain the synthetic accumulator byte for all-leading-`1` inputs.
 - In `packages/agent-world-sdk/src/peer-protocol.ts`, `/peer/key-rotation` validation is authoritative inside `registerPeerRoutes()`, and new key-binding checks should run after multibase decoding but before `peerDb.upsert(...)`.
 - Reuse `agentIdFromPublicKey()` from `packages/agent-world-sdk/src/crypto.ts` for any public-key-to-agent binding check; do not duplicate the derivation logic in route handlers or tests.
 - Repo-level key-rotation tests exercise `dist/peer-server.js`, so whenever the SDK `registerPeerRoutes()` rotation contract changes, mirror the same validation and error payload in `src/peer-server.ts` before relying on `test/key-rotation.test.mjs`.
@@ -268,4 +269,13 @@
   - The encoder bug was specific to the all-zero-byte case: the existing loop kept a placeholder zero digit in `digits`, so canonical output needs an early return when every input byte is a leading zero.
   - For this codec branch, the SDK package build is enough to validate isolated TypeScript changes in `packages/agent-world-sdk/src/identity.ts` before the later regression-test stories land.
   - This story did not require an `AGENTS.md` update because the reusable cross-file codec guidance was already documented in the root instructions and Codebase Patterns section.
+---
+## 2026-03-22 15:18:27 UTC - T-004
+- Fixed `base58Decode()` in `packages/agent-world-sdk/src/peer-protocol.ts` so canonical all-leading-`1` inputs decode to the exact zero-byte length instead of carrying an extra synthetic accumulator byte.
+- Rebuilt the SDK, rebuilt the root package, and reran `node --test test/*.test.mjs`; all checks passed with 161 tests green.
+- Files changed: `packages/agent-world-sdk/src/peer-protocol.ts`, `AGENTS.md`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - The decoder bug mirrors the encoder bug: both implementations start from a synthetic zero accumulator, so all-zero boundary cases need an explicit early return to avoid emitting one extra digit or byte.
+  - Repo validation for codec changes should still use `npm run build`, `npm --prefix packages/agent-world-sdk run build`, and `node --test test/*.test.mjs` because the root tests import built artifacts from both `dist/` trees.
+  - Updating the root `AGENTS.md` was worthwhile here because the all-zero special-case rule is a reusable constraint for future Base58 maintenance in this codebase.
 ---

@@ -347,6 +347,8 @@ function multibaseToBase64(multibase: string): string {
 const BASE58_ALPHABET =
   "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 function base58Decode(str: string): Uint8Array {
+  if (str.length === 0) return new Uint8Array()
+
   const bytes = [0];
   for (const char of str) {
     let carry = BASE58_ALPHABET.indexOf(char);
@@ -361,9 +363,16 @@ function base58Decode(str: string): Uint8Array {
       carry >>= 8;
     }
   }
+
+  let leadingZeroCount = 0
   for (const char of str) {
-    if (char === "1") bytes.push(0);
-    else break;
+    if (char !== "1") break
+    leadingZeroCount++
   }
+
+  if (leadingZeroCount === str.length) return new Uint8Array(leadingZeroCount)
+
+  for (let i = 0; i < leadingZeroCount; i++) bytes.push(0)
+
   return new Uint8Array(bytes.reverse());
 }

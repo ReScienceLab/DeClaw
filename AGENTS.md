@@ -94,6 +94,7 @@ All runtime config is in `openclaw.json` under `plugins.entries.awn.config`:
 
 ### SDK Base58 Codec
 - The leading-zero-sensitive Base58 encoder for DID/multibase output lives in `packages/agent-world-sdk/src/identity.ts`, while the matching Base58 decoder used by `multibaseToBase64()` lives in `packages/agent-world-sdk/src/peer-protocol.ts`; codec fixes need both sides kept behaviorally aligned.
+- For canonical zero-value boundaries, both codec halves need an explicit all-zero special case: `base58Encode()` must return only the leading `1` prefix run for all-zero byte arrays, and `base58Decode()` must return exactly one zero byte per leading `1` without keeping an extra synthetic accumulator byte.
 - For codec regressions, prefer a dedicated root test file that imports built `dist/` artifacts and asserts the canonical boundary cases `[0]`, `[0,0]`, `[0,1]`, `[1]`, and `[1,0]` directly instead of only relying on broader identity or protocol tests.
 
 ### World Server Membership

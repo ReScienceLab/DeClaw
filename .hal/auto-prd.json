@@ -58,8 +58,8 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Updated `packages/agent-world-sdk/src/peer-protocol.ts` so `base58Decode()` treats all-leading-`1` inputs as pure zero-byte payloads instead of preserving the synthetic accumulator byte. Verified the canonical boundary cases `\"1\" -> [0]`, `\"11\" -> [0,0]`, `\"12\" -> [0,1]`, `\"2\" -> [1]`, and `\"5R\" -> [1,0]`, then re-ran the SDK build plus the full repo build/test sequence successfully."
     },
     {
       "id": "T-005",
