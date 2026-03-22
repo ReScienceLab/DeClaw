@@ -37,16 +37,23 @@ function makeProof(secretKey, signable) {
   }
 }
 
-test("sdk /peer/key-rotation rejects mismatched newAgentId binding with stable 400 error", async (t) => {
+function makeApp(t) {
   const fastify = Fastify({ logger: false })
   t.after(async () => {
     await fastify.close()
   })
 
+  const peerDb = new PeerDb()
   registerPeerRoutes(fastify, {
     identity: makeIdentity(),
-    peerDb: new PeerDb(),
+    peerDb,
   })
+
+  return { fastify, peerDb }
+}
+
+test("sdk /peer/key-rotation rejects mismatched newAgentId binding with stable 400 error", async (t) => {
+  const { fastify } = makeApp(t)
 
   const oldKey = makeIdentity()
   const newKey = makeIdentity()
@@ -90,4 +97,49 @@ test("sdk /peer/key-rotation rejects mismatched newAgentId binding with stable 4
   assert.deepEqual(response.json(), {
     error: "newAgentId does not match newPublicKey",
   })
+})
+
+test("sdk /peer/key-rotation accepts correctly bound rotations and persists the new key", async (t) => {
+  const { fastify, peerDb } = makeApp(t)
+
+  const oldKey = makeIdentity()
+  const newKey = makeIdentity()
+  const timestamp = Date.now()
+  const signable = {
+    agentId: oldKey.agentId,
+    oldPublicKey: oldKey.pubB64,
+    newPublicKey: newKey.pubB64,
+    timestamp,
+  }
+
+  const response = await fastify.inject({
+    method: "POST",
+    url: "/peer/key-rotation",
+    headers: { "content-type": "application/json" },
+    payload: {
+      type: "agentworld-identity-rotation",
+      version: PROTOCOL_VERSION,
+      oldAgentId: oldKey.agentId,
+      newAgentId: newKey.agentId,
+      oldIdentity: {
+        agentId: oldKey.agentId,
+        kid: "#identity",
+        publicKeyMultibase: toPublicKeyMultibase(oldKey.pubB64),
+      },
+      newIdentity: {
+        agentId: newKey.agentId,
+        kid: "#identity",
+        publicKeyMultibase: toPublicKeyMultibase(newKey.pubB64),
+      },
+      timestamp,
+      proofs: {
+        signedByOld: makeProof(oldKey.secretKey, signable),
+        signedByNew: makeProof(newKey.secretKey, signable),
+      },
+    },
+  })
+
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(response.json(), { ok: true })
+  assert.equal(peerDb.get(oldKey.agentId)?.publicKey, newKey.pubB64)
 })

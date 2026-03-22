@@ -204,3 +204,12 @@
   - `fastify.inject()` is sufficient for SDK route coverage here; it exercises `registerPeerRoutes()` without starting a network listener and keeps the regression focused on the authoritative handler.
   - This story did not require an `AGENTS.md` update because the reusable key-rotation validation guidance was already recorded in the root guide and Codebase Patterns section.
 ---
+## 2026-03-22 14:27:33 UTC - T-007
+- Added a direct SDK success regression in `test/key-rotation-sdk.test.mjs` that submits a correctly bound `/peer/key-rotation` request through `registerPeerRoutes()` and asserts both the `200 { ok: true }` response and persisted key update.
+- Verified the story with `npm run build`, `npm --prefix packages/agent-world-sdk run build`, and `node --test test/*.test.mjs`; the full suite passed with 161 tests and 0 failures.
+- Files changed: `test/key-rotation-sdk.test.mjs`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - `test/key-rotation.test.mjs` already covers the plugin-level success path, so the missing confidence gap for this story was the authoritative SDK route itself.
+  - For SDK route success coverage, asserting `peerDb.get(oldAgentId)?.publicKey === newPublicKey` is the strongest proof that the accepted rotation reached the existing persistence path without weakening response assertions.
+  - This story did not require an `AGENTS.md` update because the reusable key-rotation handler and validation-contract patterns were already documented.
+---
