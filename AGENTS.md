@@ -5,12 +5,13 @@ OpenClaw plugin for direct P2P communication between agent instances over plain 
 ## Core Commands
 
 - Build: `npm run build`
+- Build SDK for tests that import `packages/agent-world-sdk/dist`: `npm --prefix packages/agent-world-sdk run build`
 - Run tests: `node --test test/*.test.mjs`
 - Dev (watch mode): `npm run dev`
 - Add changeset: `npx changeset add`
 - Publish skill to ClawHub: `npx clawhub@latest publish skills/awn`
 
-Always run build before tests — tests import from `dist/`.
+For full repo validation, build both packages before tests: `npm run build && npm --prefix packages/agent-world-sdk run build && node --test test/*.test.mjs`.
 
 ## Project Layout
 
@@ -83,6 +84,10 @@ All runtime config is in `openclaw.json` under `plugins.entries.awn.config`:
 - JSON file at `$data_dir/peers.json`
 - World membership / registry writes are debounced (1s); manual ops and TOFU writes are immediate
 - `flushDb()` called on service shutdown
+
+### World Server Membership
+- In `packages/agent-world-sdk/src/world-server.ts`, joined-world membership is tracked by `agentLastSeen` and `agentEndpoints`; `getMembers()` already treats active members as the intersection of those maps.
+- `peerDb` is broader discovery state and may include known peers outside the active world membership, so broadcast recipient selection should not use `peerDb` as the source of truth for world-state delivery.
 
 ## Git Workflow
 

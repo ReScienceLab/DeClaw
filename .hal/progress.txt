@@ -7,6 +7,8 @@
 - In `gateway/server.mjs`, `/peer/message` is relay-only: it should verify and forward `world.state` payloads, but registry membership must come only from `/peer/announce`.
 - In `gateway/server.mjs`, lifecycle cleanup should retain server and timer handles in module scope so signal handlers can flush the registry once, clear intervals, and close listeners idempotently.
 - In `gateway/server.mjs`, `/health` must keep `ok: true` for compatibility while deriving `status` from registry contents: `ready` when `worlds > 0`, `warming` when `agents > 0` but no worlds, and `empty` when the registry is empty.
+- In `packages/agent-world-sdk/src/world-server.ts`, active world membership is tracked by `agentLastSeen` plus `agentEndpoints`; `getMembers()` already treats membership as their intersection, while `peerDb` is broader discovery state and should not be used as the source of truth for joined-world recipients.
+- Full repo validation currently needs both TypeScript builds before `node --test test/*.test.mjs`: run `npm run build` and `npm --prefix packages/agent-world-sdk run build` so both `dist/` trees exist for the tests.
 
 (Add reusable patterns discovered during implementation here)
 
@@ -60,4 +62,13 @@
   - Health freshness should be tracked separately from persistence writes; `_registryModifiedAt` reflects registry load or mutation time, while `registryAge` becomes `null` whenever the in-memory registry is empty.
   - Gateway observability changes should stay additive on `/health`; keep the endpoint unauthenticated and backward compatible by preserving `ok: true` and existing top-level fields.
   - There is still no `gateway/AGENTS.md`, so reusable gateway health conventions belong in `.hal/progress.txt` unless a local guide is introduced later.
+---
+## 2026-03-22 13:41:09 UTC - T-001
+- Documented the current `broadcastWorldState()` targeting path in `packages/agent-world-sdk/src/world-server.ts` and recorded that it still derives recipients from `peerDb.values()` rather than world membership state.
+- Files changed: `.hal/auto-prd.json`, `.hal/progress.txt`, `AGENTS.md`
+- **Learnings for future iterations:**
+  - `agentLastSeen` and `agentEndpoints` already contain the active world membership information needed for broadcast recipient derivation; `getMembers()` demonstrates the expected intersection rule.
+  - The current privacy gap is localized to `broadcastWorldState()`, which still fans out over discovery peers from `peerDb` if they have endpoints.
+  - Root `AGENTS.md` is the right place to preserve world-server conventions that apply across future stories in this branch.
+  - Full test validation in this repo currently requires building both the root package and `packages/agent-world-sdk`; the root `npm run build` alone does not create the SDK `dist/` files consumed by several tests.
 ---
