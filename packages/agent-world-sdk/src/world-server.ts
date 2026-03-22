@@ -106,6 +106,16 @@ export async function createWorldServer(
     return members;
   }
 
+  function getBroadcastRecipientIds(): string[] {
+    const recipients: string[] = []
+    for (const agentId of agentLastSeen.keys()) {
+      const member = agentEndpoints.get(agentId)
+      if (!member?.endpoints.length) continue
+      recipients.push(agentId)
+    }
+    return recipients
+  }
+
   // Append-only event ledger — blockchain-inspired agent activity log
   const ledger = new WorldLedger(dataDir, worldId, identity);
   console.log(
@@ -257,7 +267,7 @@ export async function createWorldServer(
   await fastify.listen({ port, host: "::" });
   console.log(`[world] Listening on [::]:${port}  world=${worldId}`);
 
-  // Outbound: broadcast world.state to known peers
+  // Outbound: broadcast world.state to active world members
   async function broadcastWorldState() {
     const state = hooks.getState();
     const snapshot = {
@@ -266,8 +276,8 @@ export async function createWorldServer(
       theme: worldTheme,
       ...((state as object) ?? {}),
     };
-    const knownPeers = [...peerDb.values()].filter((p) => p.endpoints?.length);
-    if (!knownPeers.length) return;
+    const recipientIds = getBroadcastRecipientIds()
+    if (!recipientIds.length) return;
 
     const payload: Record<string, unknown> = {
       from: identity.agentId,
@@ -283,36 +293,39 @@ export async function createWorldServer(
     );
 
     await Promise.allSettled(
-      knownPeers.map(async (peer) => {
-        for (const ep of [...peer.endpoints].sort(
-          (a, b) => a.priority - b.priority
-        )) {
-          try {
-            const isIpv6 =
-              ep.address.includes(":") && !ep.address.includes(".");
-            const url = isIpv6
-              ? `http://[${ep.address}]:${ep.port ?? 8099}/peer/message`
-              : `http://${ep.address}:${ep.port ?? 8099}/peer/message`;
-            const body = JSON.stringify(canonicalize(payload));
-            const urlObj = new URL(url);
-            const awHeaders = signHttpRequest(
-              identity,
-              "POST",
-              urlObj.host,
-              "/peer/message",
-              body
-            );
-            await fetch(url, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...awHeaders },
-              body,
-              signal: AbortSignal.timeout(8_000),
-            });
-            return;
-          } catch {
-            /* try next endpoint */
-          }
-        }
+      recipientIds.map(async (agentId) => {
+        const member = agentEndpoints.get(agentId)
+        if (!member?.endpoints.length) return
+        await Promise.allSettled(
+          [...member.endpoints]
+            .sort((a, b) => a.priority - b.priority)
+            .map(async (ep) => {
+              try {
+                const isIpv6 =
+                  ep.address.includes(":") && !ep.address.includes(".");
+                const url = isIpv6
+                  ? `http://[${ep.address}]:${ep.port ?? 8099}/peer/message`
+                  : `http://${ep.address}:${ep.port ?? 8099}/peer/message`;
+                const body = JSON.stringify(canonicalize(payload));
+                const urlObj = new URL(url);
+                const awHeaders = signHttpRequest(
+                  identity,
+                  "POST",
+                  urlObj.host,
+                  "/peer/message",
+                  body
+                );
+                await fetch(url, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", ...awHeaders },
+                  body,
+                  signal: AbortSignal.timeout(8_000),
+                });
+              } catch {
+                /* try other endpoints */
+              }
+            })
+        )
       })
     );
   }

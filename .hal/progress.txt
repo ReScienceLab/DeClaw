@@ -7,6 +7,13 @@
 - In `gateway/server.mjs`, `/peer/message` is relay-only: it should verify and forward `world.state` payloads, but registry membership must come only from `/peer/announce`.
 - In `gateway/server.mjs`, lifecycle cleanup should retain server and timer handles in module scope so signal handlers can flush the registry once, clear intervals, and close listeners idempotently.
 - In `gateway/server.mjs`, `/health` must keep `ok: true` for compatibility while deriving `status` from registry contents: `ready` when `worlds > 0`, `warming` when `agents > 0` but no worlds, and `empty` when the registry is empty.
+- In `packages/agent-world-sdk/src/world-server.ts`, active world membership is tracked by `agentLastSeen` plus `agentEndpoints`; `getMembers()` already treats membership as their intersection, while `peerDb` is broader discovery state and should not be used as the source of truth for joined-world recipients.
+- In `packages/agent-world-sdk/src/world-server.ts`, broadcast delivery must use the selected member's own `agentEndpoints` entry; do not fall back to `peerDb` for per-recipient endpoint lists after membership filtering.
+- In `packages/agent-world-sdk/src/world-server.ts`, world-state broadcasts should attempt every endpoint registered on an active member, not stop after the first successful `/peer/message` delivery.
+- Full repo validation currently needs both TypeScript builds before `node --test test/*.test.mjs`: run `npm run build` and `npm --prefix packages/agent-world-sdk run build` so both `dist/` trees exist for the tests.
+- In `test/world-state-broadcast.test.mjs`, model a discovered-but-not-joined peer by sending a signed `/peer/announce` without `world.join`; that seeds the old `peerDb` shape while leaving `agentLastSeen` and `agentEndpoints` empty for exclusion coverage.
+- In `test/world-state-broadcast.test.mjs`, prove endpoint ownership by seeding both a discovered non-member and a joined member, intercepting outbound `/peer/message` calls, and asserting the exact hit-port set matches only the joined member's endpoints.
+- In `test/world-members.test.mjs`, the suite reuses one world server across subtests, so membership assertions should verify inclusion or exclusion of specific agent IDs instead of assuming the member list starts empty.
 
 (Add reusable patterns discovered during implementation here)
 
@@ -60,4 +67,83 @@
   - Health freshness should be tracked separately from persistence writes; `_registryModifiedAt` reflects registry load or mutation time, while `registryAge` becomes `null` whenever the in-memory registry is empty.
   - Gateway observability changes should stay additive on `/health`; keep the endpoint unauthenticated and backward compatible by preserving `ok: true` and existing top-level fields.
   - There is still no `gateway/AGENTS.md`, so reusable gateway health conventions belong in `.hal/progress.txt` unless a local guide is introduced later.
+---
+## 2026-03-22 13:41:09 UTC - T-001
+- Documented the current `broadcastWorldState()` targeting path in `packages/agent-world-sdk/src/world-server.ts` and recorded that it still derives recipients from `peerDb.values()` rather than world membership state.
+- Files changed: `.hal/auto-prd.json`, `.hal/progress.txt`, `AGENTS.md`
+- **Learnings for future iterations:**
+  - `agentLastSeen` and `agentEndpoints` already contain the active world membership information needed for broadcast recipient derivation; `getMembers()` demonstrates the expected intersection rule.
+  - The current privacy gap is localized to `broadcastWorldState()`, which still fans out over discovery peers from `peerDb` if they have endpoints.
+  - Root `AGENTS.md` is the right place to preserve world-server conventions that apply across future stories in this branch.
+  - Full test validation in this repo currently requires building both the root package and `packages/agent-world-sdk`; the root `npm run build` alone does not create the SDK `dist/` files consumed by several tests.
+---
+## 2026-03-22 13:44:42 UTC - T-002
+- Added `getBroadcastRecipientIds()` in `packages/agent-world-sdk/src/world-server.ts` and switched `broadcastWorldState()` to derive eligible recipient agent IDs from active membership state instead of iterating `peerDb.values()`.
+- Files changed: `packages/agent-world-sdk/src/world-server.ts`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - In `world-server.ts`, recipient selection and transport lookup are separate concerns: select member IDs from `agentLastSeen` plus `agentEndpoints`, then let later logic decide how to resolve per-recipient delivery metadata.
+  - This story only narrows who is eligible for broadcast; endpoint ownership and multi-endpoint delivery assertions still belong to the next stories.
+  - A focused SDK-only `npm --prefix packages/agent-world-sdk run build` is enough to typecheck changes isolated to the world server before broader regression coverage is added.
+---
+## 2026-03-22 13:46:57 UTC - T-003
+- Updated `broadcastWorldState()` in `packages/agent-world-sdk/src/world-server.ts` so each eligible member's send loop resolves endpoints from that member's `agentEndpoints` entry instead of `peerDb`.
+- Files changed: `packages/agent-world-sdk/src/world-server.ts`, `AGENTS.md`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - In `world-server.ts`, membership filtering alone is not enough for privacy; endpoint ownership must stay tied to the selected agent ID all the way through delivery.
+  - `agentEndpoints` already carries the sorted delivery candidates needed for broadcasts, so `peerDb` should not re-enter the world-state path after recipient IDs are chosen.
+  - Root `AGENTS.md` is the right place to preserve reusable world-server delivery rules that future stories in this branch need to follow.
+---
+## 2026-03-22 13:51:29 UTC - T-004
+- Kept `broadcastWorldState()` on the existing signed HTTP `/peer/message` delivery path, but changed the per-member loop to attempt every registered endpoint owned by the active member instead of returning after the first success.
+- Added `test/world-state-broadcast.test.mjs` to verify one joined member with two endpoints receives a `world.state` send attempt on both owned endpoints.
+- Files changed: `packages/agent-world-sdk/src/world-server.ts`, `test/world-state-broadcast.test.mjs`, `AGENTS.md`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - The current world-state transport path is the inline signed HTTP `fetch()` to `/peer/message`; preserve that path when tightening recipient rules so delivery semantics stay consistent.
+  - Multi-endpoint world members expect a broadcast attempt per owned endpoint, so the loop must not short-circuit after the first successful send.
+  - A `fetch` interceptor in `node:test` is an effective way to assert outbound world-state sends without standing up full peer servers when the test only needs to observe attempted deliveries.
+---
+## 2026-03-22 13:55:51 UTC - T-005
+- Added a reusable `createKnownNonMemberFixture()` helper in `test/world-state-broadcast.test.mjs` that seeds discovery through a signed `/peer/announce` while intentionally skipping `world.join`.
+- Verified the fixture exposes a reachable endpoint in the announced `peers` payload, matching the peer shape the pre-fix `peerDb`-based broadcast path would have targeted.
+- Files changed: `test/world-state-broadcast.test.mjs`, `AGENTS.md`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - For broadcast privacy regressions, a signed `/peer/announce` is enough to create a known peer in discovery state without making that agent an active world member.
+  - Keeping the non-member fixture in a helper avoids duplicating announce-signing setup across the upcoming exclusion and inclusion tests in this file.
+  - Full validation for these stories should continue using both package builds before `node --test test/*.test.mjs`, since this test imports SDK `dist/` output.
+---
+## 2026-03-22 13:58:04 UTC - T-006
+- Added a regression in `test/world-state-broadcast.test.mjs` that intercepts outbound `/peer/message` sends, announces a reachable non-member peer, waits across multiple broadcast intervals, and asserts that no `world.state` delivery is attempted to that endpoint.
+- Added `afterEach()` fetch restoration in the same test file so the exclusion and inclusion cases do not leak mocked network behavior into each other.
+- Files changed: `test/world-state-broadcast.test.mjs`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - The clearest way to prove a broadcast exclusion in this suite is to intercept `fetch`, seed the peer through `/peer/announce`, wait longer than one broadcast interval, and assert zero `/peer/message` hits for the non-member endpoint.
+  - Restoring `globalThis.fetch` after each broadcast test keeps negative and positive delivery assertions isolated while still sharing one world server fixture.
+  - Full validation for this branch remains `npm run build && npm --prefix packages/agent-world-sdk run build && node --test test/*.test.mjs`.
+---
+## 2026-03-22 13:59:39 UTC - T-007
+- Strengthened the positive regression in `test/world-state-broadcast.test.mjs` so it now seeds a discovered non-member alongside a joined member and asserts `world.state` delivery hits exactly the active member's registered endpoints.
+- Updated the root agent guide with the endpoint-ownership broadcast test pattern and marked T-007 passing in `.hal/auto-prd.json`.
+- Files changed: `test/world-state-broadcast.test.mjs`, `AGENTS.md`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - The positive broadcast regression should share the non-member fixture with the joined-member case so the test proves both inclusion and endpoint ownership in one setup.
+  - For these outbound delivery tests, asserting the sorted set of intercepted destination ports is more robust than relying on hit order across concurrent fetches.
+  - Full validation for this branch still requires both builds before `node --test test/*.test.mjs`.
+---
+## 2026-03-22 14:02:53 UTC - T-008
+- Reviewed the remaining membership-related tests and tightened `test/world-members.test.mjs` with a regression that announces a reachable peer without `world.join`, then verifies a later join response does not include that discovered non-member.
+- Refactored the test file to share announce/join helpers at suite scope so the new expectation reuses the same signing path as the existing member-list assertions.
+- Files changed: `test/world-members.test.mjs`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - `test/world-members.test.mjs` keeps one world server alive for the whole suite, so cross-test state accumulates unless assertions target specific agent IDs.
+  - A signed `/peer/announce` is sufficient to seed discovery state in the world-members suite, which makes it a good place to verify that membership responses ignore non-joined peers.
+  - Full validation remains `npm run build && npm --prefix packages/agent-world-sdk run build && node --test test/*.test.mjs`.
+---
+## 2026-03-22 14:04:37 UTC - T-009
+- Ran the full repo validation sequence required for this branch: `npm run build`, `npm --prefix packages/agent-world-sdk run build`, and `node --test test/*.test.mjs`.
+- Confirmed the branch changes are green end to end: both builds succeeded and the test suite completed with 157 passing tests and 0 failures.
+- Files changed: `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - The repo validation command order in `AGENTS.md` is accurate and sufficient for this area: build the root package first, then the SDK package, then run the Node test suite.
+  - `T-009` did not require an `AGENTS.md` update because it validated existing patterns rather than introducing a new reusable convention.
+  - A clean `git status` before the bookkeeping update is a useful check here because this final story should only add Hal tracking changes after the code and tests are already settled.
 ---
