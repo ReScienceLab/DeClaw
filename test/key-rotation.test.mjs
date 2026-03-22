@@ -186,6 +186,52 @@ describe("key rotation endpoint", () => {
     assert.equal(resp.status, 400)
   })
 
+  test("rejects mismatched rotated identity binding with stable 400 error", async () => {
+    const oldKey = makeKeypair()
+    const newKey = makeKeypair()
+    const otherNewKey = makeKeypair()
+    addWorldMembers("test-world", [oldKey.agentId])
+
+    const signable = {
+      agentId: oldKey.agentId,
+      oldPublicKey: oldKey.publicKey,
+      newPublicKey: newKey.publicKey,
+      timestamp: Date.now(),
+    }
+    const body = {
+      type: "agentworld-identity-rotation",
+      version: PROTOCOL_VERSION,
+      oldAgentId: oldKey.agentId,
+      newAgentId: otherNewKey.agentId,
+      oldIdentity: {
+        agentId: oldKey.agentId,
+        kid: "#identity",
+        publicKeyMultibase: pubToMultibase(oldKey.publicKey),
+      },
+      newIdentity: {
+        agentId: otherNewKey.agentId,
+        kid: "#identity",
+        publicKeyMultibase: pubToMultibase(newKey.publicKey),
+      },
+      timestamp: signable.timestamp,
+      proofs: {
+        signedByOld: makeProof("#identity", oldKey.secretKey, signable),
+        signedByNew: makeProof("#identity", newKey.secretKey, signable),
+      },
+    }
+
+    const resp = await fetch(`http://[::1]:${port}/peer/key-rotation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+
+    assert.equal(resp.status, 400)
+    assert.deepEqual(await resp.json(), {
+      error: "newAgentId does not match newPublicKey",
+    })
+  })
+
   test("rejects wrong type/version", async () => {
     const resp = await fetch(`http://[::1]:${port}/peer/key-rotation`, {
       method: "POST",

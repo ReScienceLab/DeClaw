@@ -90,6 +90,7 @@ All runtime config is in `openclaw.json` under `plugins.entries.awn.config`:
 ### SDK Key Rotation
 - In `packages/agent-world-sdk/src/peer-protocol.ts`, the authoritative `/peer/key-rotation` validation lives inside `registerPeerRoutes()`; add binding checks there before the `peerDb.upsert(agentId, newPublicKeyB64, {})` state mutation.
 - Reuse `agentIdFromPublicKey()` from `packages/agent-world-sdk/src/crypto.ts` for key-to-agent binding checks instead of duplicating derivation logic in tests or route handlers.
+- The root plugin server in `src/peer-server.ts` also implements `/peer/key-rotation` for repo-level tests; when tightening rotation validation in the SDK route, mirror the same binding checks and error contract there so `dist/peer-server.js` stays behaviorally aligned.
 
 ### World Server Membership
 - In `packages/agent-world-sdk/src/world-server.ts`, joined-world membership is tracked by `agentLastSeen` and `agentEndpoints`; `getMembers()` already treats active members as the intersection of those maps.

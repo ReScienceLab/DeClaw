@@ -3,6 +3,7 @@
 ## Codebase Patterns
 - In `packages/agent-world-sdk/src/peer-protocol.ts`, `/peer/key-rotation` validation is authoritative inside `registerPeerRoutes()`, and new key-binding checks should run after multibase decoding but before `peerDb.upsert(...)`.
 - Reuse `agentIdFromPublicKey()` from `packages/agent-world-sdk/src/crypto.ts` for any public-key-to-agent binding check; do not duplicate the derivation logic in route handlers or tests.
+- Repo-level key-rotation tests exercise `dist/peer-server.js`, so whenever the SDK `registerPeerRoutes()` rotation contract changes, mirror the same validation and error payload in `src/peer-server.ts` before relying on `test/key-rotation.test.mjs`.
 - In `gateway/server.mjs`, keep peer-protocol response payloads backward compatible even when internal registry helpers are renamed; `/peer/peers` and `/peer/announce` still emit `peers`.
 - Gateway registry persistence lives in `gateway/server.mjs` as a self-contained `$DATA_DIR/registry.json` helper: load on startup, filter out entries older than `STALE_TTL_MS`, and write atomically through `registry.json.tmp` + rename.
 - In `gateway/server.mjs`, registry persistence side effects should stay explicit: announce-driven `upsertAgent()` calls opt into debounced saves, while prune/shutdown paths use `flushRegistry()` for immediate durability.
@@ -175,4 +176,13 @@
   - The new-key binding check belongs immediately after multibase decoding and the existing old-key binding validation so malformed rotations fail before timestamp/proof processing can reach persistence.
   - The existing valid-rotation flow remains compatible because `makeRotationBody()` in `test/key-rotation.test.mjs` already pairs `newAgentId` with the ID derived from `newPublicKey`.
   - No `AGENTS.md` update was needed here because the reusable route-location and helper-reuse guidance was already captured in the root agent guide and Codebase Patterns.
+---
+## 2026-03-22 14:20:03 UTC - T-004
+- Aligned both key-rotation handlers to return the explicit HTTP 400 payload `{ "error": "newAgentId does not match newPublicKey" }` when the rotated identity binding is malformed, and made the derived `expectedNewAgentId` check explicit in both routes.
+- Added a focused regression in `test/key-rotation.test.mjs` that submits a mismatched `newAgentId`/`newPublicKey` pair and asserts the exact stable 400 error body.
+- Files changed: `packages/agent-world-sdk/src/peer-protocol.ts`, `src/peer-server.ts`, `test/key-rotation.test.mjs`, `AGENTS.md`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - The SDK route and the root plugin peer server each implement `/peer/key-rotation`; tightening the contract in only one place leaves the repo test path inconsistent.
+  - `test/key-rotation.test.mjs` imports the compiled root `dist/peer-server.js`, so build ordering matters when validating handler changes in this area.
+  - The stable client-facing mismatch contract for this branch is HTTP 400 with the exact JSON body `{ "error": "newAgentId does not match newPublicKey" }`.
 ---

@@ -281,7 +281,8 @@ export function registerPeerRoutes(
         .code(400)
         .send({ error: "agentId does not match oldPublicKey" });
     }
-    if (agentIdFromPublicKey(newPublicKeyB64) !== rot.newAgentId) {
+    const expectedNewAgentId = agentIdFromPublicKey(newPublicKeyB64);
+    if (expectedNewAgentId !== rot.newAgentId) {
       return reply
         .code(400)
         .send({ error: "newAgentId does not match newPublicKey" });
