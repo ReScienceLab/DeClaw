@@ -14,6 +14,7 @@
 - In `packages/agent-world-sdk/src/world-server.ts`, broadcast delivery must use the selected member's own `agentEndpoints` entry; do not fall back to `peerDb` for per-recipient endpoint lists after membership filtering.
 - In `packages/agent-world-sdk/src/world-server.ts`, world-state broadcasts should attempt every endpoint registered on an active member, not stop after the first successful `/peer/message` delivery.
 - Full repo validation currently needs both TypeScript builds before `node --test test/*.test.mjs`: run `npm run build` and `npm --prefix packages/agent-world-sdk run build` so both `dist/` trees exist for the tests.
+- The SDK Base58 codec is split across files: `packages/agent-world-sdk/src/identity.ts` owns `base58Encode` for DID/multibase generation, while `packages/agent-world-sdk/src/peer-protocol.ts` owns `base58Decode` for multibase parsing, so leading-zero fixes need paired coverage on both sides.
 - In `test/world-state-broadcast.test.mjs`, model a discovered-but-not-joined peer by sending a signed `/peer/announce` without `world.join`; that seeds the old `peerDb` shape while leaving `agentLastSeen` and `agentEndpoints` empty for exclusion coverage.
 - In `test/world-state-broadcast.test.mjs`, prove endpoint ownership by seeding both a discovered non-member and a joined member, intercepting outbound `/peer/message` calls, and asserting the exact hit-port set matches only the joined member's endpoints.
 - In `test/world-members.test.mjs`, the suite reuses one world server across subtests, so membership assertions should verify inclusion or exclusion of specific agent IDs instead of assuming the member list starts empty.
@@ -239,4 +240,13 @@
   - For final scope review stories, `git diff --name-only main...HEAD` plus the targeted patch review is enough to confirm whether unrelated transport, discovery, membership, or broadcast behavior slipped into the branch.
   - In this branch, the non-bookkeeping diff remains confined to `packages/agent-world-sdk/src/peer-protocol.ts`, `src/peer-server.ts`, and the key-rotation regression tests, which is the expected minimal surface for this security fix.
   - No `AGENTS.md` update was needed in this iteration because the reusable key-rotation guidance was already captured earlier in the root guide.
+---
+## 2026-03-22 15:02:11 UTC - T-001
+- Confirmed the Base58 leading-zero fix scope is limited to `packages/agent-world-sdk/src/identity.ts` for encode behavior, `packages/agent-world-sdk/src/peer-protocol.ts` for decode behavior, and focused regression tests under `test/`.
+- Recorded the explicit regression matrix `[0]`, `[0,0]`, `[0,1]`, `[1]`, and `[1,0]` in `.hal/auto-prd.json`, and documented the cross-file codec split in `AGENTS.md` plus the consolidated Codebase Patterns section.
+- Files changed: `.hal/auto-prd.json`, `AGENTS.md`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - The encode and decode halves of the SDK Base58 codec do not live together: DID/multibase generation uses `base58Encode` in `packages/agent-world-sdk/src/identity.ts`, while multibase parsing uses `base58Decode` in `packages/agent-world-sdk/src/peer-protocol.ts`.
+  - The right regression shape for this bug is a dedicated root test that imports built artifacts and asserts the canonical leading-zero cases directly, rather than inferring correctness only through higher-level identity helpers.
+  - This story is planning and scope confirmation only, so the minimal acceptance check is the SDK TypeScript build rather than the full repo test workflow.
 ---

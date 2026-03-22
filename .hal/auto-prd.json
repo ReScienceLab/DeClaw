@@ -1,141 +1,147 @@
 {
-  "project": "Validate Key Rotation Agent Binding",
-  "branchName": "compound/validate-key-rotation-agent-binding",
-  "description": "Enforce server-side validation that /peer/key-rotation rejects requests where newAgentId does not match the agent ID derived from newPublicKey, preserve valid rotation behavior, add regression coverage, and verify the SDK and repo test suite still pass.",
+  "project": "Fix Base58 Leading-Zero Codec",
+  "branchName": "compound/fix-base58-leading-zero-codec",
+  "description": "Fix the SDK base58 encoder and decoder so leading zero bytes round-trip correctly, preserve canonical outputs for known-good cases, and add focused regression coverage for direct codec behavior plus dependent identity helpers.",
   "userStories": [
     {
       "id": "T-001",
-      "title": "Locate the authoritative key rotation validation path",
-      "description": "As a developer, I need to identify the exact /peer/key-rotation handler and any helper functions it uses so that the binding fix is implemented in the authoritative validation path.",
+      "title": "Confirm codec scope and regression inputs",
+      "description": "As a developer, I need the implementation scope and regression inputs confirmed in the relevant SDK and test files so that the fix stays limited to the leading-zero codec bug.",
       "acceptanceCriteria": [
-        "The SDK source file and function handling /peer/key-rotation are identified",
-        "The code location where newAgentId and newPublicKey can be validated before state mutation is documented in the task output or implementation notes",
+        "Implementation work is limited to `packages/agent-world-sdk/src/identity.ts`, `packages/agent-world-sdk/src/peer-protocol.ts`, and affected test files needed for verification.",
+        "The regression inputs `[0]`, `[0,0]`, `[0,1]`, `[1]`, and `[1,0]` are explicitly represented in the resulting task breakdown or test plan.",
         "Typecheck passes"
       ],
       "priority": 1,
       "passes": true,
-      "notes": "The authoritative SDK route is `registerPeerRoutes()` in `packages/agent-world-sdk/src/peer-protocol.ts`, specifically the `fastify.post(\"/peer/key-rotation\", ...)` handler. It already decodes `oldIdentity.publicKeyMultibase` and `newIdentity.publicKeyMultibase` to `oldPublicKeyB64` and `newPublicKeyB64`, then validates the old binding with `agentIdFromPublicKey(oldPublicKeyB64) !== agentId`. The correct insertion point for the upcoming new-key binding check is in that same handler immediately after multibase decoding and before any path can reach `peerDb.upsert(agentId, newPublicKeyB64, {})`."
+      "notes": "Confirmed scope for the leading-zero codec fix is limited to `packages/agent-world-sdk/src/identity.ts` for `base58Encode`, `packages/agent-world-sdk/src/peer-protocol.ts` for `base58Decode`/`multibaseToBase64`, and affected regression tests under `test/` that import built `dist/` artifacts. Existing broad identity coverage lives in `test/agentid-identity.test.mjs`, but the focused regression plan for this branch is a dedicated `test/base58.test.mjs` covering the explicit byte cases `[0]`, `[0,0]`, `[0,1]`, `[1]`, and `[1,0]` for encode, decode, and round-trip checks."
     },
     {
       "id": "T-002",
-      "title": "Identify and reuse the agent ID derivation helper",
-      "description": "As a developer, I need to confirm the existing helper that derives an agent ID from a public key so that the fix reuses the source-of-truth identity binding logic instead of duplicating it.",
+      "title": "Identify deterministic identity helper fixtures",
+      "description": "As a developer, I need a deterministic public-key fixture and fixed expected outputs identified for DID and multibase helpers so that regression tests assert stable literals instead of recomputing expectations.",
       "acceptanceCriteria": [
-        "The existing helper used to derive an agent ID from a public key is identified in the SDK or shared identity code",
-        "The planned validation path references the existing helper instead of introducing duplicate derivation logic",
+        "A deterministic fixture is selected from existing repo coverage or introduced in tests for identity helper assertions.",
+        "Expected `deriveDidKey` and `toPublicKeyMultibase` outputs are recorded as explicit string literals in tests or implementation notes.",
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": true,
-      "notes": "The existing source-of-truth helper is `agentIdFromPublicKey()` in `packages/agent-world-sdk/src/crypto.ts`. The authoritative `/peer/key-rotation` handler in `packages/agent-world-sdk/src/peer-protocol.ts` already imports that helper, so the upcoming new-key binding validation should call `agentIdFromPublicKey(newPublicKeyB64)` in that handler immediately after multibase decoding and before any path can reach `peerDb.upsert(agentId, newPublicKeyB64, {})`."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "T-003",
-      "title": "Add derived new-agent validation in the rotation handler",
-      "description": "As a developer, I need the /peer/key-rotation handler to derive the expected agent ID from newPublicKey and compare it to newAgentId so that mismatched rotated identities are rejected.",
+      "title": "Fix base58 encoding for leading zero bytes",
+      "description": "As a developer, I need `base58Encode` to emit canonical leading `1` prefixes so that byte arrays with leading zeros preserve their exact binary value when encoded.",
       "acceptanceCriteria": [
-        "The handler derives an expected agent ID from newPublicKey using the existing helper",
-        "The handler compares the derived agent ID to newAgentId before accepting the rotation",
-        "Requests with matching newAgentId and newPublicKey continue into the existing success path",
+        "`base58Encode(Buffer.from([0]))` returns exactly `\"1\"`.",
+        "`base58Encode(Buffer.from([0,0]))` returns exactly `\"11\"`.",
+        "`base58Encode(Buffer.from([0,1]))` returns exactly `\"12\"`.",
+        "`base58Encode(Buffer.from([1]))` returns exactly `\"2\"`.",
+        "`base58Encode(Buffer.from([1,0]))` returns exactly `\"5R\"`.",
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": true,
+      "passes": false,
       "notes": ""
     },
     {
       "id": "T-004",
-      "title": "Return a stable 400 error for mismatched rotated identities",
-      "description": "As a client developer, I need invalid rotation requests to fail with a consistent HTTP 400 response so that a mismatched new identity binding is easy to detect and diagnose.",
+      "title": "Fix base58 decoding for leading one prefixes",
+      "description": "As a developer, I need `base58Decode` to reconstruct leading zero bytes from canonical base58 inputs so that identity-related values decode without corruption.",
       "acceptanceCriteria": [
-        "A request where derived(newPublicKey) does not equal newAgentId returns HTTP 400",
-        "The response body includes the exact message \"newAgentId does not match newPublicKey\"",
-        "The mismatch response is produced by the server-side validation path rather than by a downstream failure",
+        "`base58Decode(\"1\")` returns exactly `[0]`.",
+        "`base58Decode(\"11\")` returns exactly `[0,0]`.",
+        "`base58Decode(\"12\")` returns exactly `[0,1]`.",
+        "`base58Decode(\"2\")` returns exactly `[1]`.",
+        "`base58Decode(\"5R\")` returns exactly `[1,0]`.",
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": true,
+      "passes": false,
       "notes": ""
     },
     {
       "id": "T-005",
-      "title": "Guard state mutation behind the new binding validation",
-      "description": "As a maintainer, I need the new binding check to run before any key rotation persistence or membership updates so that rejected requests cannot mutate server state.",
+      "title": "Add direct encode regression coverage",
+      "description": "As a developer, I need focused encode assertions in a dedicated codec regression test file so that canonical leading-zero outputs are verified independently of broader protocol tests.",
       "acceptanceCriteria": [
-        "The newAgentId/newPublicKey validation executes before any rotation state mutation or persistence",
-        "A mismatched rotation request does not update stored keys, rotation records, or membership state",
-        "Existing success-path state updates still occur for valid rotation requests",
+        "A file `test/base58.test.mjs` exists.",
+        "`test/base58.test.mjs` asserts exact encode results for `[0]`, `[0,0]`, `[0,1]`, `[1]`, and `[1,0]`.",
+        "The encode assertions import built artifacts rather than source files directly.",
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": true,
+      "passes": false,
       "notes": ""
     },
     {
       "id": "T-006",
-      "title": "Add a regression test for mismatched new key binding",
-      "description": "As a developer, I need a focused regression test that submits a malformed rotation request so that future changes cannot reintroduce acceptance of mismatched rotated identities.",
+      "title": "Add direct decode and round-trip regression coverage",
+      "description": "As a developer, I need decode and round-trip assertions in the codec regression test file so that the leading-zero boundary cases are validated byte-for-byte in both directions.",
       "acceptanceCriteria": [
-        "A new or updated SDK test submits a /peer/key-rotation request where newAgentId does not match the ID derived from newPublicKey",
-        "The test asserts that the response status is 400",
-        "The test asserts that the response body includes \"newAgentId does not match newPublicKey\"",
+        "`test/base58.test.mjs` asserts exact decode results for `\"1\"`, `\"11\"`, `\"12\"`, `\"2\"`, and `\"5R\"`.",
+        "`test/base58.test.mjs` includes round-trip assertions for `[0]`, `[0,0]`, `[0,1]`, `[1]`, and `[1,0]`.",
+        "Each round-trip assertion verifies byte-for-byte equality with the original input.",
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": true,
+      "passes": false,
       "notes": ""
     },
     {
       "id": "T-007",
-      "title": "Confirm valid key rotation behavior still succeeds",
-      "description": "As a developer, I need to verify that correctly bound rotation requests still complete successfully so that the security fix does not break legitimate key rotation.",
+      "title": "Add deriveDidKey regression coverage",
+      "description": "As a developer, I need deterministic `deriveDidKey` coverage so that the codec fix cannot silently change canonical DID output for known-good inputs.",
       "acceptanceCriteria": [
-        "Existing valid key rotation test coverage still passes or is updated only for validation ordering",
-        "A correctly bound newAgentId and newPublicKey continues to produce a successful rotation response",
-        "No valid rotation test weakens its assertions to accommodate the fix",
+        "Tests assert `deriveDidKey` returns a fixed expected DID string for the chosen deterministic fixture.",
+        "The expected DID value is written as an explicit literal and is not computed by the function under test.",
+        "The regression coverage lives in `test/base58.test.mjs` or another dedicated identity-focused test file that runs under `node --test test/*.test.mjs`.",
         "Typecheck passes"
       ],
       "priority": 7,
-      "passes": true,
+      "passes": false,
       "notes": ""
     },
     {
       "id": "T-008",
-      "title": "Build the SDK package after the handler and test changes",
-      "description": "As a maintainer, I need the agent-world SDK package to build cleanly after the change so that the fix remains compatible with the TypeScript project configuration.",
+      "title": "Add toPublicKeyMultibase regression coverage",
+      "description": "As a developer, I need deterministic `toPublicKeyMultibase` coverage so that canonical multibase output remains stable after the codec change.",
       "acceptanceCriteria": [
-        "Running npm --prefix packages/agent-world-sdk run build completes successfully",
-        "No new TypeScript build errors are introduced by the handler or test changes",
+        "Tests assert `toPublicKeyMultibase` returns a fixed expected multibase string for the chosen deterministic fixture.",
+        "The expected multibase value is written as an explicit literal and is not computed by the function under test.",
+        "The regression coverage runs under `node --test test/*.test.mjs`.",
         "Typecheck passes"
       ],
       "priority": 8,
-      "passes": true,
+      "passes": false,
       "notes": ""
     },
     {
       "id": "T-009",
-      "title": "Run repository tests covering key rotation behavior",
-      "description": "As a maintainer, I need the repository test suite to pass after the fix so that the new validation is verified against current integration expectations.",
+      "title": "Verify SDK package build after codec changes",
+      "description": "As a developer, I need the SDK package build to pass after the codec updates so that downstream tests import fresh built artifacts with the fix applied.",
       "acceptanceCriteria": [
-        "Running node --test test/*.test.mjs completes successfully",
-        "Existing key rotation-related tests continue to pass alongside the new regression coverage",
+        "`npm --prefix packages/agent-world-sdk run build` completes successfully.",
+        "The build output includes the updated codec logic needed by tests.",
         "Typecheck passes"
       ],
       "priority": 9,
-      "passes": true,
+      "passes": false,
       "notes": ""
     },
     {
       "id": "T-010",
-      "title": "Review final scope for a minimal security fix",
-      "description": "As a maintainer, I need to confirm the delivered change remains limited to binding validation, stable error handling, and regression coverage so that unrelated protocol behavior is not modified.",
+      "title": "Verify root build and test suite",
+      "description": "As a developer, I need the repo build and test workflow to pass with the new regression coverage so that the base58 fix is validated the same way local development and CI expect.",
       "acceptanceCriteria": [
-        "The final change set is limited to key rotation validation, error handling, and regression coverage for newAgentId/newPublicKey binding",
-        "No unrelated transport, discovery, membership, or broadcast behavior is modified",
+        "`npm run build` completes successfully.",
+        "`node --test test/*.test.mjs` completes successfully.",
+        "The executed test suite includes `test/base58.test.mjs`.",
         "Typecheck passes"
       ],
       "priority": 10,
-      "passes": true,
+      "passes": false,
       "notes": ""
     }
   ]

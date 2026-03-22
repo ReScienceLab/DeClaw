@@ -92,6 +92,10 @@ All runtime config is in `openclaw.json` under `plugins.entries.awn.config`:
 - Reuse `agentIdFromPublicKey()` from `packages/agent-world-sdk/src/crypto.ts` for key-to-agent binding checks instead of duplicating derivation logic in tests or route handlers.
 - The root plugin server in `src/peer-server.ts` also implements `/peer/key-rotation` for repo-level tests; when tightening rotation validation in the SDK route, mirror the same binding checks and error contract there so `dist/peer-server.js` stays behaviorally aligned.
 
+### SDK Base58 Codec
+- The leading-zero-sensitive Base58 encoder for DID/multibase output lives in `packages/agent-world-sdk/src/identity.ts`, while the matching Base58 decoder used by `multibaseToBase64()` lives in `packages/agent-world-sdk/src/peer-protocol.ts`; codec fixes need both sides kept behaviorally aligned.
+- For codec regressions, prefer a dedicated root test file that imports built `dist/` artifacts and asserts the canonical boundary cases `[0]`, `[0,0]`, `[0,1]`, `[1]`, and `[1,0]` directly instead of only relying on broader identity or protocol tests.
+
 ### World Server Membership
 - In `packages/agent-world-sdk/src/world-server.ts`, joined-world membership is tracked by `agentLastSeen` and `agentEndpoints`; `getMembers()` already treats active members as the intersection of those maps.
 - `peerDb` is broader discovery state and may include known peers outside the active world membership, so broadcast recipient selection should not use `peerDb` as the source of truth for world-state delivery.
