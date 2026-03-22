@@ -306,3 +306,12 @@
   - For these boundary tests, round-trip assertions should compare decoded bytes against the original arrays directly, not only check that re-encoding reproduces the same string.
   - No `AGENTS.md` update was needed here because the reusable compiled-artifact import pattern is now captured in the Codebase Patterns section.
 ---
+## 2026-03-22 14:52:29 UTC - T-007
+- Added deterministic `deriveDidKey` regression coverage to `test/base58.test.mjs` using the fixed public-key fixture and an explicit DID literal.
+- Verified the story with `npm --prefix packages/agent-world-sdk run build`, `npm run build`, and `node --test test/*.test.mjs`.
+- Files changed: `test/base58.test.mjs`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - The identity-helper regression can live alongside the direct Base58 boundary tests in `test/base58.test.mjs` as long as it imports the compiled SDK helper from `packages/agent-world-sdk/dist/identity.js`.
+  - For this branch, the stable DID literal for `iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w=` is `did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX`, and keeping it inline avoids recomputing expectations in the test.
+  - No `AGENTS.md` update was needed because the reusable deterministic-fixture guidance was already captured in the root guide and Codebase Patterns section.
+---
