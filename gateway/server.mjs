@@ -95,8 +95,7 @@ export async function createGatewayApp(opts = {}) {
 
   const registry = new Map() // agentId -> PeerRecord
   let _saveTimer = null
-  let _pruneTimer = null
-  let _snapshotTimer = null
+  let _tickTimer = null
   let _shutdownPromise = null
   let _registryModifiedAt = null
 
@@ -211,11 +210,14 @@ export async function createGatewayApp(opts = {}) {
       saveRegistry()
     }
     if (firstSeen && webhookUrl) {
+      const caps = nextRecord.capabilities ?? []
+      const worldCap = caps.find((c) => c.startsWith("world:"))
+      const worldId = worldCap ? worldCap.slice("world:".length) : undefined
       fetch(webhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event: "world.announced", agentId, ts: Date.now() }),
-        signal: AbortSignal.timeout(5000),
+        body: JSON.stringify({ event: "world.announced", agentId, worldId, ts: Date.now() }),
+        signal: AbortSignal.timeout(5_000),
       }).catch(() => {})
     }
   }
@@ -561,13 +563,9 @@ export async function createGatewayApp(opts = {}) {
     if (_shutdownPromise) return _shutdownPromise
 
     _shutdownPromise = (async () => {
-      if (_pruneTimer) {
-        clearInterval(_pruneTimer)
-        _pruneTimer = null
-      }
-      if (_snapshotTimer) {
-        clearInterval(_snapshotTimer)
-        _snapshotTimer = null
+      if (_tickTimer) {
+        clearInterval(_tickTimer)
+        _tickTimer = null
       }
       flushRegistry()
       try {
@@ -585,8 +583,8 @@ export async function createGatewayApp(opts = {}) {
     await app.listen({ port: httpPort, host: "::" })
     console.log(`[gateway] agentId=${selfAgentId}`)
     console.log(`[gateway] HTTP on [::]:${httpPort}`)
-    _pruneTimer = setInterval(() => pruneStaleAgents(), 30 * 1000)
-    _snapshotTimer = setInterval(() => {
+    _tickTimer = setInterval(() => {
+      pruneStaleAgents()
       if (_registryModifiedAt !== null) {
         try { writeRegistry() } catch (error) {
           console.warn("[gateway] Periodic snapshot failed", error)
