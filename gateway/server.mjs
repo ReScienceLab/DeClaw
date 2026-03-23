@@ -527,10 +527,7 @@ export async function createGatewayApp(opts = {}) {
         clearInterval(_pruneTimer)
         _pruneTimer = null
       }
-      if (_saveTimer) {
-        clearTimeout(_saveTimer)
-        _saveTimer = null
-      }
+      flushRegistry()
       try {
         await app.close()
       } catch (error) {
