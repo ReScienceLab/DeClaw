@@ -23,7 +23,7 @@ jobs:
     env:
       ECR_REPOSITORY: awn-gateway
       INSTANCE_ID: i-04670f4d1a72c7d5d
-      GATEWAY_URL: ${{ vars.GATEWAY_URL || 'http://gateway.agentsworlds.ai' }}
+      GATEWAY_URL: ${{ vars.GATEWAY_URL || 'https://gateway.agentsworlds.ai' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -55,7 +55,7 @@ jobs:
 
           RECORD_ID=$(echo "$EXISTING" | jq -r '.result[0].id // empty')
 
-          PAYLOAD="{\"type\":\"A\",\"name\":\"$GATEWAY_HOST\",\"content\":\"$EC2_IP\",\"ttl\":1,\"proxied\":false}"
+          PAYLOAD="{\"type\":\"A\",\"name\":\"$GATEWAY_HOST\",\"content\":\"$EC2_IP\",\"ttl\":1,\"proxied\":true}"
 
           if [ -n "$RECORD_ID" ]; then
             curl -sf -X PUT \

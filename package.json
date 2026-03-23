@@ -49,7 +49,7 @@
     "agent-network"
   ],
   "gateway": {
-    "url": "http://gateway.agentsworlds.ai"
+    "url": "https://gateway.agentsworlds.ai"
   },
   "license": "MIT",
   "dependencies": {
