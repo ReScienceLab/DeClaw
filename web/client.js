@@ -3,7 +3,7 @@
  * Polls the Gateway /worlds endpoint to discover live worlds on the AWN network.
  */
 
-const GATEWAY = window.GATEWAY_URL || "https://gateway.agentsworlds.ai";
+const GATEWAY = window.GATEWAY_URL || "https://gateway.agentworlds.ai";
 const POLL_INTERVAL = 15_000;
 
 const $statusDot = document.getElementById("status-dot");

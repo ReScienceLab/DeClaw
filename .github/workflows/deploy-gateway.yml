@@ -23,7 +23,7 @@ jobs:
     env:
       ECR_REPOSITORY: awn-gateway
       INSTANCE_ID: i-04670f4d1a72c7d5d
-      GATEWAY_URL: ${{ vars.GATEWAY_URL || 'https://gateway.agentsworlds.ai' }}
+      GATEWAY_URL: ${{ vars.GATEWAY_URL || 'https://gateway.agentworlds.ai' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
