@@ -8,10 +8,10 @@
     "start": "node server.mjs"
   },
   "dependencies": {
-    "@resciencelab/agent-world-sdk": "file:../packages/agent-world-sdk",
-    "fastify": "^5.0.0",
-    "@fastify/websocket": "^11.0.0",
     "@fastify/cors": "^10.0.0",
+    "@fastify/websocket": "^11.0.0",
+    "@resciencelab/agent-world-sdk": "^1.1.0",
+    "fastify": "^5.0.0",
     "tweetnacl": "^1.0.3"
   }
 }

@@ -23,6 +23,7 @@ jobs:
     env:
       ECR_REPOSITORY: awn-gateway
       INSTANCE_ID: i-04670f4d1a72c7d5d
+      GATEWAY_URL: ${{ vars.GATEWAY_URL || 'http://gateway.agentsworlds.ai' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -38,21 +39,23 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
         run: |
+          GATEWAY_HOST=$(echo "$GATEWAY_URL" | sed 's|^https\?://||' | cut -d'/' -f1)
+
           EC2_IP=$(aws ec2 describe-instances \
             --instance-ids "$INSTANCE_ID" \
             --region us-east-2 \
             --query "Reservations[0].Instances[0].PublicIpAddress" \
             --output text)
-          echo "EC2 public IP: $EC2_IP"
+          echo "EC2 public IP: $EC2_IP  Gateway: $GATEWAY_HOST"
 
           EXISTING=$(curl -sf \
-            "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records?type=A&name=gateway.agentsworlds.ai" \
+            "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records?type=A&name=$GATEWAY_HOST" \
             -H "Authorization: Bearer $CF_API_TOKEN" \
             -H "Content-Type: application/json")
 
           RECORD_ID=$(echo "$EXISTING" | jq -r '.result[0].id // empty')
 
-          PAYLOAD="{\"type\":\"A\",\"name\":\"gateway.agentsworlds.ai\",\"content\":\"$EC2_IP\",\"ttl\":1,\"proxied\":false}"
+          PAYLOAD="{\"type\":\"A\",\"name\":\"$GATEWAY_HOST\",\"content\":\"$EC2_IP\",\"ttl\":1,\"proxied\":false}"
 
           if [ -n "$RECORD_ID" ]; then
             curl -sf -X PUT \
@@ -67,7 +70,7 @@ jobs:
               -H "Authorization: Bearer $CF_API_TOKEN" \
               -H "Content-Type: application/json" \
               -d "$PAYLOAD"
-            echo "Created DNS A record gateway.agentsworlds.ai → $EC2_IP"
+            echo "Created DNS A record $GATEWAY_HOST → $EC2_IP"
           fi
 
       - name: Login to Amazon ECR
@@ -94,7 +97,7 @@ jobs:
           # credential helper for authentication instead of the aws CLI.
           PARAMS=$(jq -cn \
             --arg pull "docker pull $IMAGE" \
-            --arg run "docker run -d --name awn-gateway --restart unless-stopped -p 8099:8099 -p 80:8100 -v /opt/awn-gateway/data:/data -e PEER_PORT=8099 -e HTTP_PORT=8100 -e DATA_DIR=/data -e PUBLIC_URL=http://gateway.agentsworlds.ai -e PUBLIC_ADDR=gateway.agentsworlds.ai $IMAGE" \
+            --arg run "docker run -d --name awn-gateway --restart unless-stopped -p 8099:8099 -p 80:8100 -v /opt/awn-gateway/data:/data -e PEER_PORT=8099 -e HTTP_PORT=8100 -e DATA_DIR=/data -e PUBLIC_URL=$GATEWAY_URL -e PUBLIC_ADDR=$(echo $GATEWAY_URL | sed 's|^https\?://||' | cut -d'/' -f1) $IMAGE" \
             '{commands: [
               "command -v amazon-ecr-credential-helper >/dev/null 2>&1 || apt-get install -y amazon-ecr-credential-helper",
               "mkdir -p /root/.docker && printf '"'"'{\"credsStore\":\"ecr-login\"}'"'"' > /root/.docker/config.json",
