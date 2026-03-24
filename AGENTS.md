@@ -235,6 +235,7 @@ No `develop` branch. No backmerge.
 | `package-lock.json` | `"version"` (auto-updated) |
 | `openclaw.plugin.json` | `"version"` |
 | `skills/awn/SKILL.md` | `version:` in YAML frontmatter |
+| `packages/awn-cli/Cargo.toml` | `version` (also derives `PROTOCOL_VERSION` at compile time) |
 
 ### Versioning
 
@@ -276,6 +277,7 @@ These files must always have matching versions (synced automatically by `scripts
 | `package-lock.json` | `"version"` (auto-updated by `npm version`) |
 | `openclaw.plugin.json` | `"version"` |
 | `skills/awn/SKILL.md` | `version:` in YAML frontmatter |
+| `packages/awn-cli/Cargo.toml` | `version` (also derives `PROTOCOL_VERSION` at compile time) |
 
 ### Versioning
 
