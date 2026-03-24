@@ -85,5 +85,16 @@ describe("Gateway GET /worlds", () => {
     assert.ok(schemas.includes("WorldSummary"), "must include WorldSummary schema")
     assert.ok(schemas.includes("Endpoint"), "must include Endpoint schema")
     assert.ok(schemas.includes("PeerRecord"), "must include PeerRecord schema")
+
+    for (const [route, schemaName] of [
+      ["/peer/announce", "AnnounceRequest"],
+      ["/peer/heartbeat", "HeartbeatRequest"],
+      ["/peer/message", "SignedMessage"],
+    ]) {
+      const post = spec.paths[route]?.post
+      assert.ok(post, `${route} POST must exist`)
+      const ref = post.requestBody?.content?.["application/json"]?.schema?.$ref
+      assert.ok(ref && ref.includes(schemaName), `${route} requestBody must reference ${schemaName}`)
+    }
   })
 })

@@ -574,6 +574,12 @@ export async function createGatewayApp(opts = {}) {
       }
     });
 
+    // Skip body validation for peer routes — signature verification is the
+    // validation layer, and Fastify's schema validation would interfere with
+    // the custom content parser that preserves rawBody for signature checks.
+    const noValidate = () => () => true;
+    peer.setValidatorCompiler(noValidate);
+
     peer.get("/peer/ping", {
       schema: {
         summary: "Peer liveness check",
@@ -614,6 +620,7 @@ export async function createGatewayApp(opts = {}) {
         operationId: "postAnnounce",
         tags: ["peer"],
         description: "Ed25519-signed announcement from a world server.",
+        body: { $ref: "AnnounceRequest#" },
         response: {
           200: {
             type: "object",
@@ -659,6 +666,7 @@ export async function createGatewayApp(opts = {}) {
         operationId: "postHeartbeat",
         tags: ["peer"],
         description: "Updates an agent's lastSeen without a full re-announce.",
+        body: { $ref: "HeartbeatRequest#" },
         response: {
           200: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } },
           400: { $ref: "Error#" },
@@ -695,6 +703,7 @@ export async function createGatewayApp(opts = {}) {
         operationId: "postMessage",
         tags: ["peer"],
         description: "Receives Ed25519-signed messages from world servers.",
+        body: { $ref: "SignedMessage#" },
         response: {
           200: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } },
           400: { $ref: "Error#" },
