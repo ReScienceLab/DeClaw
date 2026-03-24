@@ -339,7 +339,7 @@ components:
 
     WorldSummary:
       type: object
-      required: [worldId, agentId, name, reachable, lastSeen]
+      required: [worldId, agentId, name, endpoints, reachable, lastSeen]
       properties:
         worldId:
           type: string
@@ -347,6 +347,10 @@ components:
           type: string
         name:
           type: string
+        endpoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/Endpoint"
         reachable:
           type: boolean
         lastSeen:
