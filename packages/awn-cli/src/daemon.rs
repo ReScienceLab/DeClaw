@@ -1008,12 +1008,18 @@ async fn handle_world_action(
         .build()
         .unwrap();
 
-    // Build action content
-    let content = serde_json::json!({
-        "action": body.action,
-        "params": body.params
-    })
-    .to_string();
+    // Build action content - spread params at top level alongside action
+    let mut content_obj = serde_json::json!({
+        "action": body.action
+    });
+    if let serde_json::Value::Object(params) = body.params {
+        if let serde_json::Value::Object(ref mut obj) = content_obj {
+            for (k, v) in params {
+                obj.insert(k, v);
+            }
+        }
+    }
+    let content = content_obj.to_string();
 
     // Build signed P2P message with event "world.action"
     let msg = build_signed_p2p_message(&state.identity, "world.action", &content);
